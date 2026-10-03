@@ -1,0 +1,32 @@
+# Cardboard Face Mask — build configuration.
+# Units are Skyrim world units (1 unit = 1.42875 cm; a human head is ~13 units wide).
+
+# --- Photo / silhouette -------------------------------------------------------
+source_image: input/IMG_2117.PNG
+silhouette_mode: face_hair_glasses   # face_only | face_hair | face_hair_glasses
+
+# --- Mask geometry ------------------------------------------------------------
+thickness_units: 0.3        # cardboard thickness (~4 mm, deliberately chunky)
+forward_offset_units: 1.8   # gap between the face surface (nose tip) and the back of the mask
+bend_radius_units: 24       # cylindrical bend of the sheet around the face; 0 = perfectly flat
+size_factor: 1.08           # photo chin-to-crown height relative to the NPC's chin-to-crown height
+scale_human: 1.0
+scale_female: 0.96          # applied on top of scale_human for the female model
+scale_beast: 1.25           # Khajiit / Argonian (bigger heads, snouts)
+edge_wobble_units: 0.04     # hand-cut jitter along the outline; 0 = clean die-cut
+string_radius_units: 0.06
+string_sag: 0.6             # 0..1, how far the string droops at the back of the head
+string_asymmetry: 0.35      # 0..1, how lopsided the string is (one side rides higher)
+tape_strip: true            # masking-tape strips holding the string on the back
+
+# --- Plugin / distribution ----------------------------------------------------
+plugin_name: CardboardFaceMask.esp
+slot: 55                    # biped slot; 55 coexists with helmets (30/31/42)
+non_playable: false         # true = hidden from inventory/loot (verify auto-equip in game first)
+exclude_children: true
+distribute_to_player: false # SPID only targets NPCs; use the console to try it on yourself
+chance_percent: 100
+
+# --- Textures -----------------------------------------------------------------
+texture_size: 2048          # mask atlas edge length (power of two)
+twine_texture_size: 512
