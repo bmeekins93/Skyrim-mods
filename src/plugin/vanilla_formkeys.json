@@ -1,0 +1,55 @@
+{
+  "source": "Mutagen.Bethesda.FormKeys.SkyrimSE 3.4.0.0 (generated from Skyrim.esm)",
+  "armor": {
+    "race": {
+      "DefaultRace": "000019:Skyrim.esm"
+    },
+    "keywords": {
+      "ArmorClothing": "06BBE8:Skyrim.esm"
+    },
+    "pickup_sound": {
+      "ITMClothingUpSD": "03E879:Skyrim.esm"
+    },
+    "putdown_sound": {
+      "ITMClothingDownSD": "03E909:Skyrim.esm"
+    }
+  },
+  "human_addon": {
+    "race": {
+      "DefaultRace": "000019:Skyrim.esm"
+    },
+    "additional_races": {
+      "DremoraRace": "0131F0:Skyrim.esm",
+      "BretonRace": "013741:Skyrim.esm",
+      "DarkElfRace": "013742:Skyrim.esm",
+      "HighElfRace": "013743:Skyrim.esm",
+      "ImperialRace": "013744:Skyrim.esm",
+      "NordRace": "013746:Skyrim.esm",
+      "OrcRace": "013747:Skyrim.esm",
+      "RedguardRace": "013748:Skyrim.esm",
+      "WoodElfRace": "013749:Skyrim.esm",
+      "ElderRace": "067CD8:Skyrim.esm",
+      "NordRaceAstrid": "07EAF3:Skyrim.esm",
+      "NordRaceVampire": "088794:Skyrim.esm",
+      "BretonRaceVampire": "08883C:Skyrim.esm",
+      "DarkElfRaceVampire": "08883D:Skyrim.esm",
+      "HighElfRaceVampire": "088840:Skyrim.esm",
+      "ImperialRaceVampire": "088844:Skyrim.esm",
+      "RedguardRaceVampire": "088846:Skyrim.esm",
+      "WoodElfRaceVampire": "088884:Skyrim.esm",
+      "DA13AfflictedRace": "097A3D:Skyrim.esm",
+      "OrcRaceVampire": "0A82B9:Skyrim.esm",
+      "ElderRaceVampire": "0A82BA:Skyrim.esm"
+    }
+  },
+  "beast_addon": {
+    "race": {
+      "KhajiitRace": "013745:Skyrim.esm"
+    },
+    "additional_races": {
+      "ArgonianRace": "013740:Skyrim.esm",
+      "ArgonianRaceVampire": "08883A:Skyrim.esm",
+      "KhajiitRaceVampire": "088845:Skyrim.esm"
+    }
+  }
+}

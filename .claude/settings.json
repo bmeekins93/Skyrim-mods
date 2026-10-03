@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/block_game_data.sh\"",
+            "timeout": 10,
+            "statusMessage": "Checking for writes into a Skyrim Data folder"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,11 @@
+{
+ "maleheadkhajiit.nif": {
+  "what": "vanilla Skyrim SE Khajiit male head (BSDynamicTriShape '_Neutral', skinned to skeletonbeast.nif), used by src/cfm/fit.py as a beast reference head",
+  "source_repo": "https://github.com/BadDogSkyrim/PyNifly.git",
+  "commit": "bcb723aba2ca4a80e976d957efbde69b33f2e56f",
+  "path": "tests/tests/SkyrimSE/meshes/actors/character/character assets/maleheadkhajiit.nif",
+  "git_blob": "c0f069c1784121ce84adcfe073f604abd7a9299e",
+  "sha256": "de5602f85a1c5be4b312120a5b0ab0fc9add371b47c04e1db35b8f93e62bab6b",
+  "note": "Byte-identical copy of PyNifly's test asset at the commit pinned in tools/nifly/build_niflydll.py. Game data (c) Bethesda; kept only as an offline test reference. Remove once tools/setup.sh adds the path to PyNifly's sparse checkout (cfm.fit.reference_path then uses third_party/PyNifly)."
+ }
+}

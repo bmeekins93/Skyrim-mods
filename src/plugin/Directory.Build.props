@@ -1,0 +1,11 @@
+<Project>
+  <!--
+    Keep .NET build output out of the source tree: everything MSBuild produces for the
+    projects under src/plugin goes to work/plugin/dotnet/ (git-ignored, regenerable).
+  -->
+  <PropertyGroup>
+    <CfmRepoRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)', '..', '..'))</CfmRepoRoot>
+    <ArtifactsPath>$(CfmRepoRoot)work/plugin/dotnet</ArtifactsPath>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+</Project>

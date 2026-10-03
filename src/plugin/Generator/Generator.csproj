@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    CardboardFaceMask.esp generator (Mutagen). Run through src/plugin/build_plugin.py with the regenerate option.
+    Package versions are pinned; packages.lock.json records the full resolved graph.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>CardboardFaceMask.Generator</AssemblyName>
+    <RootNamespace>CardboardFaceMask.Generator</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Latest stable Mutagen (2026-08-08); net9/net10 only, so we target net10.0 (SDK 10 installed). -->
+    <PackageReference Include="Mutagen.Bethesda.Skyrim" Version="0.54.4" />
+    <!-- FormKeys generated from the real Skyrim.esm: the verified source for vanilla FormIDs/EditorIDs. -->
+    <PackageReference Include="Mutagen.Bethesda.FormKeys.SkyrimSE" Version="3.4.0" />
+    <!-- Reads config.yaml. -->
+    <PackageReference Include="YamlDotNet" Version="18.1.0" />
+  </ItemGroup>
+</Project>

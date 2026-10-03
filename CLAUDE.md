@@ -13,8 +13,11 @@ wraps awkwardly around the back of the head. Personal use only. No Papyrus scrip
   ARMO FaceMaskArmor 0x800 (Clothing, wt 0, val 0, AR 0, biped slot 55, playable unless config says otherwise),
   ARMA FaceMaskAA 0x801 (DefaultRace + explicit humanoid/vampire/elder races, slot 55, M+F models),
   ARMA FaceMaskAA_Beast 0x802 (Khajiit/Argonian + vampire variants, scaled mesh).
-- Distribution: CardboardFaceMask_DISTR.ini (SPID), primary line:
+- Distribution: CardboardFaceMask_DISTR.ini (SPID). SPID only adds items to inventories (it stopped
+  auto-equipping items in 2024), so the mask is also equipped through KEF (Keyword Equip Framework,
+  an SKSE plugin) via a SPID-distributed keyword (config equip_method):
   Item = 0x800~CardboardFaceMask.esp|ActorTypeNPC|NONE|NONE|-C|1|100
+  Keyword = KEFEquip_0x800_CardboardFaceMask_esp|ActorTypeNPC|NONE|NONE|-C|NONE|100
 - Meshes: meshes/CardboardFaceMask/mask_{human,beast}_{m,f}.nif — BSTriShape, BSLightingShaderProperty,
   no collision, every vertex skinned 1.0 to "NPC Head [Head]", dismember partition 55.
 - Textures: textures/CardboardFaceMask/*.dds with mipmaps, power-of-two sizes.
@@ -33,5 +36,6 @@ wraps awkwardly around the back of the head. Personal use only. No Papyrus scrip
   fetches Blender into third_party/blender (Linux). On Windows use PyNifly's official NiflyDLL.dll.
 - Python: always run with `.venv/bin/python`. Shared helpers live in src/cfm/.
 - Blender (headless renders): third_party/blender/blender or $BLENDER.
-- .NET SDK 8+ for the plugin generator and Spriggit.
+- .NET 10 SDK for the plugin generator and Spriggit (generator targets net10.0; Spriggit.CLI ships net10.0 only).
 - Full build: `.venv/bin/python src/build_all.py`; tests: `.venv/bin/python -m pytest tests`.
+- Visual acceptance gate: `.venv/bin/python src/render_check.py --nif work/nif/mask_human_m.nif --head human --out docs/renders/render_human_m.png --strict` (see `--help`).

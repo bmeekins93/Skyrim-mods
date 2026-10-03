@@ -1,0 +1,16 @@
+# Core pipeline: textures, DDS, mesh, NIF export, packaging and tests (stages 02-07).
+# Versions pinned from the reference environment (.venv, CPython 3.11.15, 2026-10-03).
+# tools/setup.sh installs this; by hand: .venv/bin/pip install -r requirements.txt
+# The segmentation stage (01) also needs requirements-ml.txt.
+numpy==2.4.6
+pillow==12.3.0
+opencv-python-headless==5.0.0.93   # macOS wheels: arm64 on macOS 13+, x86_64 on macOS 14+
+scipy==1.17.1
+shapely==2.1.2
+PyYAML==6.0.3
+# DDS encoding / verification (src/cfm/img_dds.py)
+etcpak==0.9.15            # BC7 encoder
+quicktex==0.3.1           # BC1 / BC3 encoder (wheels for CPython 3.9-3.13)
+texture2ddecoder==1.0.6   # independent decoder (wheels: CPython 3.8-3.10, abi3 for 3.11+)
+# tests
+pytest==9.1.1

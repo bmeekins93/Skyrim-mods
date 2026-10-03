@@ -1,0 +1,20 @@
+# Segmentation stage only (src/01_segment.py): SegFormer face parsing + BiRefNet matting on the CPU.
+# Versions pinned from the reference environment (.venv, CPython 3.11.15, 2026-10-03).
+#
+# Linux: install the CPU-only PyTorch build FIRST (the default PyPI wheel bundles CUDA, several GB);
+# tools/setup.sh does this:
+#   .venv/bin/pip install --index-url https://download.pytorch.org/whl/cpu torch==2.14.1 torchvision==0.29.1
+#   .venv/bin/pip install -r requirements-ml.txt      # 2.14.1+cpu already satisfies torch==2.14.1
+# macOS: the PyPI wheels are CPU/Metal builds, so `pip install -r requirements-ml.txt` is enough,
+# but torch 2.14.1 / torchvision 0.29.1 ship macOS wheels only for Apple Silicon on macOS 14+;
+# elsewhere, run the segment stage on another machine and copy work/outline.json + work/matte.png.
+# Model weights download on first use into ~/.cache/huggingface (pinned revisions in src/cfm/img_segment.py).
+torch==2.14.1
+torchvision==0.29.1
+transformers==5.18.0
+huggingface_hub==1.33.0
+safetensors==0.8.0
+# imported by BiRefNet's remote model code (loaded with trust_remote_code=True)
+timm==1.0.30
+einops==0.8.2
+kornia==0.8.3

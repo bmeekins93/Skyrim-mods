@@ -17,6 +17,8 @@ edge_wobble_units: 0.04     # hand-cut jitter along the outline; 0 = clean die-c
 string_radius_units: 0.06
 string_sag: 0.6             # 0..1, how far the string droops at the back of the head
 string_asymmetry: 0.35      # 0..1, how lopsided the string is (one side rides higher)
+string_clearance_units: 1.0 # how far the string rides above the bald scalp at the back of the head,
+                            # i.e. over typical hair (0.15 = tight to the skull, hidden under hair)
 tape_strip: true            # masking-tape strips holding the string on the back
 
 # --- Plugin / distribution ----------------------------------------------------
@@ -26,6 +28,9 @@ non_playable: false         # true = hidden from inventory/loot (verify auto-equ
 exclude_children: true
 distribute_to_player: false # SPID only targets NPCs; use the console to try it on yourself
 chance_percent: 100
+equip_method: kef           # kef = also distribute a KEFEquip keyword so Keyword Equip Framework (SKSE)
+                            #       makes NPCs wear the mask; engine = SPID Item line only (SPID never
+                            #       equips items itself, so NPCs may just carry the mask in inventory)
 
 # --- Textures -----------------------------------------------------------------
 texture_size: 2048          # mask atlas edge length (power of two)
