@@ -9,6 +9,9 @@ Run:          .venv/bin/python -m pytest tests/test_nif.py
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -23,7 +26,8 @@ from cfm.geom_nifinfo import RawNif, block_list, vertex_flags  # noqa: E402
 from cfm.geom_xform import (HEAD_BONE, NifFile, apply, rotation_about, shape_skin,  # noqa: E402
                             skeleton_binds, skinned_model_positions)
 from cfm.geom_twine import (ASYM_SIDE_UNITS, BACK_EXTRA, CLEARANCE_FACTOR, CROWN_MARGIN, EAR_TOP_GAP,  # noqa: E402
-                            SAG_DROP_UNITS, UV_WRAP_TILES, back_weight, densify, ear_gaps, tube_centre_line)
+                            SAG_DROP_UNITS, UV_WRAP_TILES, back_swell, back_weight, densify, ear_gaps,
+                            tube_centre_line)
 from cfm.geometry import (MASK_SHAPE, TWINE_SHAPE, TWINE_SIDES, VARIANTS, build_variant, load_npz,  # noqa: E402
                           twine_vs_headgear)
 from cfm.paths import PYNIFLY_TESTS, SKELETONS, WORK, load_config  # noqa: E402
@@ -70,6 +74,16 @@ def heads():
 def gear():
     """Headgear references: helmet-SMP.nif, MaleOrcHair27 (maleorchair27.nif), the lich hood."""
     return fitmod.load_headgear()
+
+
+@pytest.fixture(scope="module")
+def mesh_stage():
+    """src/03_mesh.py as a module (its gates and reports; the file name starts with a digit)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("mesh_stage_03", ROOT / "src" / "03_mesh.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 @pytest.fixture(scope="module", params=VARIANTS)
@@ -187,6 +201,73 @@ def test_vertex_format_has_tangents(nif):
         assert "COLORS" not in flags
 
 
+def stored_tangent_alignment(path) -> dict:
+    """Per shape: area-weighted mean cos(stored tangent, dP/dv) and cos(stored bitangent, dP/du),
+    with dP/du, dP/dv solved per triangle from positions and the stored NIF UVs (v down). The
+    stored basis comes from the NiSkinPartition vertex data (RawNif, independent of NiflyDLL)."""
+    raw, nif = RawNif(path), NifFile(str(path))
+    parts = [i for i, b in enumerate(raw.blocks()) if b == "NiSkinPartition"]
+    out = {}
+    for shape, part in zip(nif.shapes, parts):
+        d = raw.skin_partition_vertices(part)
+        v, t = np.array(shape.verts), np.array(shape.tris)
+        assert len(d["pos"]) == len(v) and np.allclose(d["pos"], v, atol=1e-3), shape.name
+        uv = d["uv"]
+        e1, e2 = v[t[:, 1]] - v[t[:, 0]], v[t[:, 2]] - v[t[:, 0]]
+        du1, dv1 = (uv[t[:, 1]] - uv[t[:, 0]]).T
+        du2, dv2 = (uv[t[:, 2]] - uv[t[:, 0]]).T
+        det = du1 * dv2 - du2 * dv1
+        ok = np.abs(det) > 1e-12
+        inv = np.where(ok, 1.0 / np.where(ok, det, 1.0), 0.0)[:, None]
+        dp_du = (e1 * dv2[:, None] - e2 * dv1[:, None]) * inv
+        dp_dv = (e2 * du1[:, None] - e1 * du2[:, None]) * inv
+        area = 0.5 * np.linalg.norm(np.cross(e1, e2), axis=1) * ok
+        unit = lambda a: a / np.maximum(np.linalg.norm(a, axis=-1, keepdims=True), 1e-12)  # noqa: E731
+
+        def mean_cos(stored, ref):
+            c = (unit(stored[t].mean(1)) * unit(ref)).sum(1)
+            return float((c * area).sum() / area.sum())
+        out[shape.name] = (mean_cos(d["tangent"], dp_dv), mean_cos(d["bitangent"], dp_du))
+    return out
+
+
+def test_stored_tangents_follow_uv_directions(variant):
+    """The game lights the normal maps with the per-vertex tangent/bitangent stored in the NIF;
+    Blender recomputes its own (render_check ignores them), so only this test sees a swapped or
+    negated basis. Skyrim's stored convention: tangent along dP/dv, bitangent along dP/du. Shipped
+    meshes measure 0.9999 / 0.9998 (mask) and 0.98 / 0.9997 (twine); a vanilla circlet
+    (circletm1.nif, not in the sparse checkout) measured 0.92 / 0.94 in review; > 0.9 required."""
+    for name, (cos_t, cos_b) in stored_tangent_alignment(_nif_path(variant)).items():
+        assert cos_t > 0.9 and cos_b > 0.9, (variant, name, cos_t, cos_b)
+
+
+def test_tangent_reader_agrees_on_third_party_nif():
+    """The same measurement on a NIF this pipeline did not write (helmet-SMP.nif, exported by
+    Outfit Studio): its main shape follows the same convention, so the reader is not tuned to
+    our own files."""
+    cos_t, cos_b = stored_tangent_alignment(HELMET)["Helmet"]
+    assert cos_t > 0.9 and cos_b > 0.9, (cos_t, cos_b)
+
+
+def test_export_stage_readback_gate(variant, bind, cfg, authored):
+    """src/04_export_nif.py reads every NIF back before it reports success (verify_nif); the gate
+    passes on the shipped files and names wrong slots, counts and skin transforms."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("export_nif_04", ROOT / "src" / "04_export_nif.py")
+    stage = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(stage)
+    path, b, slot = _nif_path(variant), bind[HEAD_BONE], int(cfg["slot"])
+    shapes = {n: {"vertices": len(authored.shape_arrays(n)[0]), "triangles": len(authored.shape_arrays(n)[1])}
+              for n in SHAPES}
+    assert stage.verify_nif(path, shapes, b, slot) == []
+    assert any("partitions" in m for m in stage.verify_nif(path, shapes, b, slot + 1))
+    wrong = dict(shapes, **{TWINE_SHAPE: {"vertices": 1, "triangles": 1}})
+    assert any(m.startswith(TWINE_SHAPE) for m in stage.verify_nif(path, wrong, b, slot))
+    moved = b.copy()
+    moved[:3, 3] += 1.0
+    assert any("skin-to-bone" in m for m in stage.verify_nif(path, shapes, moved, slot))
+
+
 # --- skin math ----------------------------------------------------------------------------------------
 
 
@@ -293,21 +374,25 @@ def _clearance_at(points, centre_y: float, side: float, back: float) -> np.ndarr
 def test_twine_rides_clearance_over_back_of_head(nif, variant, bind, fit, heads, cfg, authored):
     """Behind the head centre the string rides its design clearance g over the nearest bald head:
     c_side = string_clearance_units * CLEARANCE_FACTOR[kind] over the sides, swelling to
-    c_side * (1 + BACK_EXTRA[kind]) at the back centre (where hair hangs thickest): d / g has p10 >= 0.7
+    c_side * (1 + swell) at the back centre (where hair hangs thickest; swell = config
+    string_back_swell for humans, BACK_EXTRA["beast"] = 0 for the beast mesh): d / g has p10 >= 0.7
     and median >= 0.85. On EACH head (an NPC wears one; the beast mesh must clear both) it floats no
     more than the human-scale clearance + 0.5 at the median and + 1.5 at most (no halo, no lasso)."""
     kind = fit["variant_kind"][variant]
     c = float(cfg["string_clearance_units"])
     c_side = c * CLEARANCE_FACTOR[kind]
-    assert authored.report["twine"]["clearance_side_back"] == pytest.approx([c_side, c_side * (1 + BACK_EXTRA[kind])])
+    swell = back_swell(cfg, kind)
+    assert swell == (float(cfg["string_back_swell"]) if kind == "human" else 0.0) and BACK_EXTRA["beast"] == 0.0
+    assert authored.report["twine"]["back_swell"] == swell
+    assert authored.report["twine"]["clearance_side_back"] == pytest.approx([c_side, c_side * (1 + swell)])
     cy = fit["anchors"][kind]["centre"][1]
     v = _model_positions(_shape(nif, TWINE_SHAPE), bind)
     back = v[v[:, 1] < cy]
     assert len(back) > 100
     per_head = [closest_points(back, h.verts, h.tris)[0] for h in heads[kind]]
-    ratio = np.min(per_head, axis=0) / _clearance_at(back, cy, c_side, c_side * (1 + BACK_EXTRA[kind]))
+    ratio = np.min(per_head, axis=0) / _clearance_at(back, cy, c_side, c_side * (1 + swell))
     assert np.percentile(ratio, 10) >= 0.7 and np.median(ratio) >= 0.85, np.percentile(ratio, [0, 10, 50])
-    g_ref = _clearance_at(back, cy, c, c * (1 + BACK_EXTRA[kind]))
+    g_ref = _clearance_at(back, cy, c, c * (1 + swell))
     for h, d in zip(heads[kind], per_head):
         assert np.median(d - g_ref) <= 0.5 and (d - g_ref).max() <= 1.5, (h.kind, np.percentile(d - g_ref, [50, 100]))
 
@@ -375,12 +460,14 @@ def test_twine_passes_above_the_ears(nif, variant, bind, heads, fit, cfg):
     assert min(ear_gaps(line, ears, r).values()) >= EAR_TOP_GAP - 0.01
 
 
-def test_twine_visible_over_hair(nif, variant, bind, fit, heads, gear, cfg):
+def test_twine_visible_over_hair(nif, variant, bind, fit, heads, gear, cfg, authored, mesh_stage):
     """Human variants vs the hair MaleOrcHair27 (maleorchair27.nif, a dreadlock mohawk standing 2-4
-    units off the scalp at the back): where the hair covers the run round the back and sides at
-    all, >= 70 % of that length is visible (outside the hair or within one string radius of its
-    surface; single dreads hanging further out cross over the rest), and no length lies under hair
-    thinner than the side clearance."""
+    units off the scalp at the back): no length lies under hair thinner than the side clearance,
+    and, when string_back_swell >= 1.5 (the swell that rides over such dreads), >= 70 % of the run
+    round the back and sides that the hair covers at all is visible (outside the hair or within one
+    string radius of its surface; single dreads hanging further out cross over the rest). Below 1.5
+    (the default 0.75 hugs the scalp) the visible share is informational; the exported file must
+    still match what 03_mesh.py reported."""
     if not variant.startswith("human"):
         pytest.skip("human hair")
     if float(cfg["string_clearance_units"]) < 1.0:
@@ -396,17 +483,93 @@ def test_twine_visible_over_hair(nif, variant, bind, fit, heads, gear, cfg):
                             run_y_max=run_y)
     assert rep["covered_run_length"] > 5.0             # the dreads do cross the string's path
     assert rep["buried_under_thin_layer_length"] == 0, rep
-    assert rep["covered_run_visible_fraction"] >= 0.7, rep
+    reported = authored.report["headgear"]["hair"]
+    assert abs(rep["covered_run_visible_fraction"] - reported["covered_run_visible_fraction"]) < 0.05, (rep, reported)
+    if back_swell(cfg, "human") >= mesh_stage.HAIR_GATE_MIN_SWELL:
+        assert rep["covered_run_visible_fraction"] >= mesh_stage.HAIR_MIN_COVERED_VISIBLE, rep
+
+
+def _real_or_fixture_inputs():
+    outline_path, layout_path = WORK / "outline.json", WORK / "atlas_layout.json"
+    if not (outline_path.exists() and layout_path.exists()):
+        outline_path, layout_path = FIXTURES / "outline_synthetic.json", FIXTURES / "atlas_layout_synthetic.json"
+    return json.loads(outline_path.read_text(encoding="utf-8")), json.loads(layout_path.read_text(encoding="utf-8"))
+
+
+def test_hair_visibility_gate_bites_at_full_swell(cfg, fit, heads, gear, mesh_stage):
+    """string_back_swell 1.5 (thick dreads/manes): 03_mesh.py gates the share of the run under
+    MaleOrcHair27 that stays visible (>= 70 %), the built string meets it, and a report below 70 %
+    fails the build. A level ring (swell 0) hides most of that run under the dreads: there the share
+    is only reported. Both ends of the range keep the clearance, no-halo and typical-hair gates."""
+    if float(cfg["string_clearance_units"]) < mesh_stage.HAIR_GATE_MIN_CLEARANCE:
+        pytest.skip("string_clearance_units < 1.0 deliberately tucks the string under the hair")
+    outline, layout = _real_or_fixture_inputs()
+    hs = [(h.kind, h.verts, h.tris) for h in heads["human"]]
+    a = fit["anchors"]["human"]
+    ms, hair = mesh_stage, {}
+    for swell in (0.0, ms.HAIR_GATE_MIN_SWELL):
+        mesh = build_variant("human_m", outline, layout, fit, hs, dict(cfg, string_back_swell=swell),
+                             head_clearance=False)
+        tw = mesh.report["twine"]
+        c_side, c_back = tw["clearance_side_back"]
+        assert tw["back_swell"] == swell and c_back == pytest.approx(c_side * (1 + swell))
+        st = ms.twine_standoff(mesh, hs, "human", a["centre"][1])
+        ratio = st["nearest_over_design_min_p10_median_p90_max"]
+        ex = st["per_head_excess_over_reference_min_p10_median_p90_max"]["human"]
+        assert ratio[1] >= ms.BACK_GAP_MIN_FACTOR and ratio[2] >= ms.BACK_GAP_MEDIAN_FACTOR, (swell, ratio)
+        assert ex[2] <= ms.BACK_GAP_MEDIAN_OVER and ex[4] <= ms.BACK_GAP_MAX_OVER, (swell, ex)
+        sh = ms.typical_hair_shell(mesh, hs, c_side, max(p[1] for p in tw["contact_points"]))
+        assert sh["outside_fraction"] == 1.0, (swell, sh)
+        rep = ms.headgear_report(mesh, fit, "human", gear, hs, c_side, tw["radius"])["hair"]
+        assert rep["gated"] and rep["buried_under_thin_layer_length"] == 0, rep
+        hair[swell] = rep
+    full, level = hair[ms.HAIR_GATE_MIN_SWELL], hair[0.0]
+    assert full["visibility_gated"] and full["covered_run_visible_fraction"] >= ms.HAIR_MIN_COVERED_VISIBLE, full
+    assert ms.hair_gate_problems(full) == []
+    hidden = dict(full, covered_run_visible_fraction=ms.HAIR_MIN_COVERED_VISIBLE - 0.01)
+    assert any("hidden in maleorchair27" in b for b in ms.hair_gate_problems(hidden))
+    assert not level["visibility_gated"] and level["covered_run_visible_fraction"] < ms.HAIR_MIN_COVERED_VISIBLE
+    assert ms.hair_gate_problems(level) == []                     # informational below 1.5
+    assert ms.hair_gate_problems(dict(level, buried_under_thin_layer_length=0.1))   # the thin layer stays gated
+
+
+def test_back_swell_config(cfg):
+    """string_back_swell sets the human back swell (default BACK_EXTRA["human"] when the key is
+    missing); the beast mesh ignores it; negative values are rejected."""
+    assert back_swell({}, "human") == BACK_EXTRA["human"]
+    assert back_swell(cfg, "human") == float(cfg["string_back_swell"])
+    assert back_swell({"string_back_swell": 1.5}, "human") == 1.5
+    assert back_swell({"string_back_swell": 1.5}, "beast") == BACK_EXTRA["beast"] == 0.0
+    with pytest.raises(ValueError):
+        back_swell({"string_back_swell": -0.1}, "human")
+    # bounded above: the halo gates scale with the swell, so a typo (6 for 0.75) must not build a
+    # ~7-unit hoop that passes them; null / text fail with a clear message too
+    assert back_swell({"string_back_swell": 2.0}, "human") == 2.0
+    for bad in (2.01, 6.0, None, "x", float("nan")):
+        with pytest.raises(ValueError, match="string_back_swell"):
+            back_swell({"string_back_swell": bad}, "human")
+
+
+def test_string_clearance_is_bounded(cfg, fit, heads):
+    """string_clearance_units scales the halo gates as well, so values above
+    geometry.MAX_STRING_CLEARANCE are refused before anything is built."""
+    from cfm import geometry
+    with pytest.raises(ValueError, match="string_clearance_units"):
+        geometry.build_twine(None, None, {}, dict(cfg, string_clearance_units=geometry.MAX_STRING_CLEARANCE + 0.5),
+                             heads["human"], {}, "human", 1.0, None)
 
 
 def test_twine_headgear_report_is_informational(authored, fit):
     """03_mesh.py reports the string against helmet-SMP.nif and the hood without gating it (the
-    string is meant to ride over hair, so it pokes out of close-fitting headgear) and gates the hair."""
+    string is meant to ride over hair, so it pokes out of close-fitting headgear) and gates the hair
+    (thin layer; the visible share only at string_back_swell >= 1.5)."""
     gear = authored.report["headgear"]
     assert {"helmet", "hood", "hair"} <= set(gear)
     assert not gear["helmet"]["gated"] and not gear["hood"]["gated"]
-    clear = authored.report["twine"]["clearance_units"]
+    clear, swell = authored.report["twine"]["clearance_units"], authored.report["twine"]["back_swell"]
     assert gear["hair"]["gated"] == (fit["variant_kind"][authored.variant] == "human" and clear >= 1.0)
+    assert gear["hair"]["visibility_gated"] == (gear["hair"]["gated"] and swell >= 1.5)
+    assert not gear["helmet"]["visibility_gated"] and not gear["hood"]["visibility_gated"]
     assert 0 < gear["helmet"]["covered_fraction"] <= 1 and gear["helmet"]["max_poke"] < 3.0
     for name in ("helmet", "hood"):                   # weaves in and out; flicker risk reported
         assert 0 <= gear[name]["near_surface_fraction"] <= gear[name]["covered_fraction"]
@@ -527,10 +690,9 @@ def test_beast_anchor_combines_argonian_and_khajiit(fit):
 
 def test_reference_heads_are_pinned(monkeypatch):
     """Every reference NIF (heads, helmet, hair, hood) is listed in the PyNifly sparse checkout of
-    tools/nifly/build_niflydll.py, comes from third_party/PyNifly when present and matches its pinned
-    sha256. The files that joined the sparse list after the first checkout (Khajiit head, hair, hood)
-    also have byte-identical copies in tests/fixtures/vanilla, used when an older checkout lacks them
-    (build_niflydll.fetch() leaves a checkout already at the pinned commit alone)."""
+    tools/nifly/build_niflydll.py, comes from third_party/PyNifly and matches its pinned sha256.
+    No game data is kept in this repository (the former tests/fixtures/vanilla copies are gone now
+    that build_niflydll.fetch() re-applies the sparse list, see test_fetch_reapplies_sparse_list)."""
     import hashlib
     import importlib.util
     spec = importlib.util.spec_from_file_location("build_niflydll", ROOT / "tools" / "nifly" / "build_niflydll.py")
@@ -541,20 +703,42 @@ def test_reference_heads_are_pinned(monkeypatch):
     for rel in rels:
         path = fitmod.reference_path(rel)
         assert f"tests/tests/{rel}" in build.PYNIFLY_SPARSE
-        here = PYNIFLY_TESTS / rel
-        assert path == (here if here.exists() else fitmod.VANILLA_FIXTURES / Path(rel).name)
+        assert path == PYNIFLY_TESTS / rel
         assert sha(path) == fitmod.REFERENCE_SHA256[rel]
-    provenance = json.loads((fitmod.VANILLA_FIXTURES / "provenance.json").read_text(encoding="utf-8"))
-    copies = sorted(p.name for p in fitmod.VANILLA_FIXTURES.glob("*.nif"))
-    assert copies == sorted(["maleheadkhajiit.nif", "maleorchair27.nif", "draugr lich01 hood.nif"])
-    monkeypatch.setattr(fitmod, "PYNIFLY_TESTS", ROOT / "does-not-exist")      # an older checkout
-    for name in copies:
-        rel = next(r for r in rels if Path(r).name == name)
-        assert provenance[name]["path"] == f"tests/tests/{rel}"
-        assert provenance[name]["sha256"] == fitmod.REFERENCE_SHA256[rel] == sha(fitmod.VANILLA_FIXTURES / name)
-        assert fitmod.reference_path(rel) == fitmod.VANILLA_FIXTURES / name
-    with pytest.raises(FileNotFoundError):
+    assert not list((ROOT / "tests" / "fixtures").rglob("*.nif"))   # no game data in the repo
+    monkeypatch.setattr(fitmod, "PYNIFLY_TESTS", ROOT / "does-not-exist")
+    with pytest.raises(FileNotFoundError, match="fetch-only"):
         fitmod.reference_path(fitmod.HEAD_SOURCES["human"][0])
+
+
+def test_fetch_reapplies_sparse_list(tmp_path):
+    """build_niflydll.fetch() on a checkout already at the pinned commit must still pick up paths
+    added to the sparse list later (a local repository stands in for PyNifly)."""
+    import importlib.util
+    git = shutil.which("git")
+    if not git:
+        pytest.skip("git not installed")
+    spec = importlib.util.spec_from_file_location("build_niflydll", ROOT / "tools" / "nifly" / "build_niflydll.py")
+    build = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(build)
+    src = tmp_path / "src"
+    src.mkdir()
+    env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t",
+               GIT_COMMITTER_EMAIL="t@t")
+    for args in (["init", "-q"], ["config", "uploadpack.allowFilter", "true"],
+                 ["config", "uploadpack.allowAnySHA1InWant", "true"]):
+        subprocess.run([git, *args], cwd=src, check=True, env=env)
+    (src / "a.txt").write_text("a")
+    (src / "b.txt").write_text("b")
+    subprocess.run([git, "add", "."], cwd=src, check=True, env=env)
+    subprocess.run([git, "commit", "-qm", "x"], cwd=src, check=True, env=env)
+    sha = subprocess.run([git, "rev-parse", "HEAD"], cwd=src, check=True, capture_output=True,
+                         text=True).stdout.strip()
+    dest = tmp_path / "dest"
+    build.fetch(src.as_uri(), sha, dest, sparse=["a.txt"])
+    assert (dest / "a.txt").exists() and not (dest / "b.txt").exists()
+    build.fetch(src.as_uri(), sha, dest, sparse=["a.txt", "b.txt"])     # list grew, same commit
+    assert (dest / "b.txt").read_text() == "b"
 
 
 @pytest.mark.parametrize("sag,asym", [(0.0, 0.0), (0.0, 1.0), (1.0, 0.0), (1.0, 1.0)])
@@ -563,11 +747,7 @@ def test_twine_builds_at_config_extremes(variant_name, sag, asym, cfg, fit, head
     """string_sag and string_asymmetry anywhere in their documented 0..1 range build a string that
     stays out of every head of the kind and out of the cardboard, clears the human ear tops, keeps
     its higher side CROWN_MARGIN under the crown and droops as configured."""
-    outline_path, layout_path = WORK / "outline.json", WORK / "atlas_layout.json"
-    if not (outline_path.exists() and layout_path.exists()):
-        outline_path, layout_path = FIXTURES / "outline_synthetic.json", FIXTURES / "atlas_layout_synthetic.json"
-    outline = json.loads(outline_path.read_text(encoding="utf-8"))
-    layout = json.loads(layout_path.read_text(encoding="utf-8"))
+    outline, layout = _real_or_fixture_inputs()
     kind = fit["variant_kind"][variant_name]
     c = dict(cfg, string_sag=sag, string_asymmetry=asym)
     mesh = build_variant(variant_name, outline, layout, fit, [(h.kind, h.verts, h.tris) for h in heads[kind]], c,
@@ -643,7 +823,7 @@ def test_scratch_out_dirs_leave_work_and_docs_alone(tmp_path):
 
 # --- third reader: PyNifly's own Blender importer -----------------------------------------------------
 
-BLENDER = ROOT / "third_party" / "blender" / "blender"
+BLENDER = Path(os.environ["BLENDER"]) if os.environ.get("BLENDER") else ROOT / "third_party" / "blender" / "blender"
 BLENDER_SCRIPT = r'''
 import sys, types, ctypes, json, bpy, addon_utils
 # PyNifly's addon touches Win32 APIs at import time (blender_defs.GetShortPathNameW, gamefinder's
@@ -679,7 +859,7 @@ open(args[1], "w").write(json.dumps(out))
 '''
 
 
-@pytest.mark.skipif(not BLENDER.exists(), reason="Blender not installed in third_party/blender")
+@pytest.mark.skipif(not BLENDER.exists(), reason="Blender not found ($BLENDER or third_party/blender)")
 def test_pynifly_blender_importer_reads_mask(tmp_path):
     import os
     import subprocess

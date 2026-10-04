@@ -130,6 +130,12 @@ Files: `mask_human_m.nif`, `mask_human_f.nif`, `mask_beast_m.nif`, `mask_beast_f
 (optional `mask_go.nif` ground model). Texture paths written into the NIFs:
 `textures\CardboardFaceMask\mask_d.dds`, `mask_n.dds`, `twine_d.dds`, `twine_n.dds`.
 
+Acceptance inside the stage: `04_export_nif.py` reads every written NIF back with pyn
+(`verify_nif`: game, shape names and authored vertex/triangle counts, BSTriShape +
+BSDismemberSkinInstance, the single bone `NPC Head [Head]` weighting every vertex 1.0,
+skin-to-bone = inverse(bind), partitions == [slot], tangents, texture paths) and exits 1 on any
+problem or any NiflyDLL log message, before the package stage can copy the files to `dist/`.
+
 `work/nif_manifest.json`:
 ```json
 {
@@ -194,7 +200,8 @@ cross-checks `work/nif_manifest.json` when that exists): only the allowed files 
 names, no symlinks); plugin ESL-flagged, not localized, masters `[Skyrim.esm]`, own records in
 0x800-0xFFF, ARMO `FaceMaskArmor` at 0x800; every ESP model path and every NIF texture path (all
 nine BSShaderTextureSet slots, index 0-8) exists in the package with exact case; no unreferenced
-mesh/texture; DDS headers sane; ESP model paths == `work/nif_manifest.json`; ini entries as above
+mesh/texture; DDS headers sane and each DDS exactly as long as its header implies (header + every
+mip level of 4x4 blocks: a truncated file fails); ESP model paths == `work/nif_manifest.json`; ini entries as above
 (exact text == generator output, `Item` targets 0x800 of the shipped plugin, the keyword is the KEF
 name for it and reads as an EditorID in SPID, both lines select the same NPCs, nothing SPID's
 sanitizer would rewrite); zip entries == folder files byte for byte.

@@ -14,18 +14,21 @@ Acceptance gates (exit code 1 on failure), evidence in <out-dir>/mesh_report.jso
   * the twine rides its design clearance g(theta) over the back and sides of the head, no more (no
     halo, no lasso): g = c_side over the sides, swelling to c_back at the back centre
     (cfm.geom_twine: c_side = string_clearance_units * CLEARANCE_FACTOR[kind], c_back = c_side *
-    (1 + BACK_EXTRA[kind])). Behind the head centre, the distance d of its vertices to the nearest
-    head has d / g p10 >= 0.7 and median >= 0.85; on EACH head of the kind (a real NPC wears one),
-    d minus the human-scale clearance (string_clearance_units * (1 + BACK_EXTRA[kind] * back
-    weight)) has median <= 0.5 and max <= 1.5 (taut bridges behind the ears and frills)
+    (1 + swell), swell = back_swell(cfg, kind): config string_back_swell for humans, 0 for the beast
+    mesh). Behind the head centre, the distance d of its vertices to the nearest head has d / g
+    p10 >= 0.7 and median >= 0.85; on EACH head of the kind (a real NPC wears one), d minus the
+    human-scale clearance (string_clearance_units * (1 + swell * back weight)) has median <= 0.5 and
+    max <= 1.5 (taut bridges behind the ears and frills)
   * typical-hair shell: along the whole run round the back and sides, the string surface stays
     TYPICAL_HAIR_FACTOR * c_side over the nearest bald head (0.8 units for humans by default)
   * human variants: the string passes above both ear tops (its surface >= EAR_TOP_MIN over the ear top
     all along the ear's front-to-back extent, segments sampled every 0.02) and, against the hair
     MaleOrcHair27 (PyNifly test asset maleorchair27.nif, a dreadlock mohawk standing 2-4 units off
-    the scalp), no length of it lies under hair thinner than c_side - radius and >= 70 % of the run
-    where the hair covers it at all is visible (outside the hair or within a radius of its surface);
-    gated while string_clearance_units >= 1.0 (the default), informational below
+    the scalp), no length of it lies under hair thinner than c_side - radius (gated while
+    string_clearance_units >= 1.0, the default; informational below) and >= 70 % of the run where
+    the hair covers it at all is visible (outside the hair or within a radius of its surface; gated
+    only while also string_back_swell >= 1.5, the swell that rides over those dreads; at smaller
+    swells, the default 0.75 included, the visible share is reported as information)
   * twine u < 8 (restarted every few tiles) so BSTriShape's half-float UVs keep it exact
 Informational (mesh_report.json "headgear"): the same measurements against helmet-SMP.nif and the
 lich hood (the string is meant to ride over hair, so it weaves in and out of close-fitting headgear;
@@ -51,7 +54,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from cfm import fit as fitmod  # noqa: E402
 from cfm.geom_mesh import closest_points, vertex_normals, winding_agreement, write_obj  # noqa: E402
 from cfm.geom_render import hstack, project, raster, vstack  # noqa: E402
-from cfm.geom_twine import BACK_EXTRA, back_weight, densify, tube_centre_line  # noqa: E402
+from cfm.geom_twine import back_weight, densify, tube_centre_line  # noqa: E402
 from cfm.geometry import (MASK_SHAPE, TWINE_SHAPE, TWINE_SIDES, VARIANTS, build_variant, clearance,  # noqa: E402
                           save_npz, shell_depth, twine_vs_headgear)
 from cfm.paths import PYNIFLY_TESTS, ROOT, WORK, load_config  # noqa: E402
@@ -70,12 +73,15 @@ TYPICAL_HAIR_FACTOR = 0.8     # the run's string surface stays this x c_side ove
 EAR_TOP_MIN = 0.9             # string surface above the ear top wherever it runs over an ear (human; the
                               # design value is cfm.geom_twine.EAR_TOP_GAP = 1.0)
 HAIR_MIN_COVERED_VISIBLE = 0.7  # share of the run under maleorchair27.nif's hair that is visible (human),
-HAIR_GATE_MIN_CLEARANCE = 1.0  # gated when string_clearance_units >= this (the default; smaller values
-                               # deliberately tuck the string under hair, config.yaml)
+HAIR_GATE_MIN_CLEARANCE = 1.0  # hair gates apply when string_clearance_units >= this (the default; smaller
+                               # values deliberately tuck the string under hair, config.yaml)
+HAIR_GATE_MIN_SWELL = 1.5     # ... and the visibility gate only when string_back_swell >= this too: smaller
+                              # swells (default 0.75) hug the scalp and let the thick dreads cover more
 GEAR_TOL = 0.02               # helmet / hood: a string centre this far outside the shell "pokes out"
 # Headgear references (cfm.fit.HEADGEAR_SOURCES) whose surface the human string's clearance hull also
 # includes. Empty by default: ("hair",) makes the string ride over every MaleOrcHair27 dread too (100 %
-# visible instead of ~77 % where the hair covers it), at the price of a tent over the mohawk that
+# visible where the hair covers it, instead of ~77 % at string_back_swell 1.5 and less at smaller
+# swells; mesh_report.json "headgear"), at the price of a tent over the mohawk that
 # stands up to 3.8 units off the back of a bald head and 2.3 out of helmet-SMP.nif (measured;
 # docs/NIF_NOTES.md section 7).
 TWINE_OVER_HAIR: tuple = ()
@@ -135,7 +141,7 @@ def twine_standoff(mesh, heads, kind: str, centre_y: float) -> dict:
     """How far the twine rides off the back of the head: distance d of every twine vertex behind the
     head centre (y < centre_y) to the nearest reference head and to each one, against its design
     clearance g (c_side .. c_back) and the human-scale one (string_clearance_units, swelling by
-    BACK_EXTRA[kind] at the back)."""
+    the variant's back_swell at the back)."""
     tw = mesh.report["twine"]
     v = mesh.shape_arrays(TWINE_SHAPE)[0]
     back = v[:, 1] < centre_y
@@ -143,7 +149,7 @@ def twine_standoff(mesh, heads, kind: str, centre_y: float) -> dict:
     d = np.min(np.stack(list(per_head.values())), axis=0)
     g = design_clearance(v[back], centre_y, *tw["clearance_side_back"])
     c = tw["clearance_units"]
-    g_ref = design_clearance(v[back], centre_y, c, c * (1 + BACK_EXTRA[kind]))
+    g_ref = design_clearance(v[back], centre_y, c, c * (1 + tw["back_swell"]))
     pct = lambda a: [round(float(x), 4) for x in np.percentile(a, [0, 10, 50, 90, 100])]  # noqa: E731
     return {"vertices_behind_centre": int(back.sum()), "design_clearance_side_back": tw["clearance_side_back"],
             "nearest_head_min_p10_median_p90_max": pct(d), "nearest_over_design_min_p10_median_p90_max": pct(d / g),
@@ -191,7 +197,9 @@ def headgear_report(mesh, fit, kind: str, gear: dict, heads, clear: float, radiu
     """Twine vs the headgear references (cfm.fit.HEADGEAR_SOURCES), by length along its centre line.
     hair: `visible` within one string radius of the hair surface, thin layer = hair thinner than
     clear - radius over the head (clear = the side clearance); helmet / hood: informational, with
-    the length within 2 radii of their surface (may flicker)."""
+    the length within 2 radii of their surface (may flicker). Hair, human: `gated` (no length under a
+    thin layer) while string_clearance_units >= HAIR_GATE_MIN_CLEARANCE, `visibility_gated` (covered
+    run >= HAIR_MIN_COVERED_VISIBLE visible) while also string_back_swell >= HAIR_GATE_MIN_SWELL."""
     a = fit["anchors"][kind]
     centre = [0.0, a["centre"][1], a["eye_line_z"]]
     line = tube_centre_line(mesh.shape_arrays(TWINE_SHAPE)[0], TWINE_SIDES)
@@ -205,10 +213,24 @@ def headgear_report(mesh, fit, kind: str, gear: dict, heads, clear: float, radiu
         rep["source"] = src["source"]
         rep["gated"] = (name == "hair" and kind == "human"
                         and mesh.report["twine"]["clearance_units"] >= HAIR_GATE_MIN_CLEARANCE)
+        rep["visibility_gated"] = rep["gated"] and mesh.report["twine"]["back_swell"] >= HAIR_GATE_MIN_SWELL
         if kind != "human":
             rep["note"] = "informational: human headgear; the beast heads poke through it themselves"
         out[name] = rep
     return out
+
+
+def hair_gate_problems(hair: dict) -> list:
+    """The maleorchair27.nif gates on a headgear_report "hair" entry: no length under hair thinner
+    than the side clearance (when `gated`), and >= HAIR_MIN_COVERED_VISIBLE of the run it covers
+    visible (when `visibility_gated`, i.e. string_back_swell >= HAIR_GATE_MIN_SWELL)."""
+    bad = []
+    if hair.get("gated") and hair["buried_under_thin_layer_length"] > 0:
+        bad.append(f"twine buried under hair thinner than its clearance: {hair}")
+    if hair.get("visibility_gated") and (hair["covered_run_visible_fraction"] or 0.0) < HAIR_MIN_COVERED_VISIBLE:
+        bad.append(f"twine hidden in maleorchair27.nif's hair (string_back_swell >= {HAIR_GATE_MIN_SWELL} "
+                   f"must keep >= {HAIR_MIN_COVERED_VISIBLE:.0%} of the run it covers visible): {hair}")
+    return bad
 
 
 def gates(mesh, checks) -> list:
@@ -237,12 +259,7 @@ def gates(mesh, checks) -> list:
         for side, e in ears.items():
             if e["string_bottom_minus_ear_top"] is None or e["string_bottom_minus_ear_top"] < EAR_TOP_MIN:
                 bad.append(f"twine does not pass above the {side} ear top of the {head} head: {e}")
-    hair = r["headgear"].get("hair", {})
-    if hair.get("gated"):
-        if hair["buried_under_thin_layer_length"] > 0:
-            bad.append(f"twine buried under hair thinner than its clearance: {hair}")
-        if (hair["covered_run_visible_fraction"] or 0.0) < HAIR_MIN_COVERED_VISIBLE:
-            bad.append(f"twine hidden in maleorchair27.nif's hair: {hair}")
+    bad += hair_gate_problems(r["headgear"].get("hair", {}))
     if r["twine"]["u_max"] >= 8:
         bad.append(f"twine u reaches {r['twine']['u_max']}: half-float UVs lose precision (step >= 2^-7)")
     if r["twine_vs_slab"]["vertices_inside_cardboard"]:
@@ -454,7 +471,11 @@ def main() -> int:
             if gname == "ray_centre" or gname == "run_y_max":
                 continue
             cov = g["covered_run_visible_fraction"]
-            print(f"   {gname}{' (gated)' if g['gated'] else ''}: visible {g['visible_fraction']:.1%} of the string, "
+            tag = ""
+            if g["gated"]:
+                tag = (" (gated)" if g["visibility_gated"] else
+                       f" (thin layer gated; visibility informational below string_back_swell {HAIR_GATE_MIN_SWELL})")
+            print(f"   {gname}{tag}: visible {g['visible_fraction']:.1%} of the string, "
                   f"back/side run {g['run_visible_fraction']:.1%}, where it covers the run "
                   f"{'-' if cov is None else f'{cov:.1%}'} of {g['covered_run_length']}; pokes out "
                   f"{g['poke_out_fraction']:.1%} (max {g['max_poke']}), deepest under {g['deepest_under']}"

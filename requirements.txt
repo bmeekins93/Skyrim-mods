@@ -2,10 +2,10 @@
 # Versions pinned from the reference environment (.venv, CPython 3.11.15, 2026-10-03).
 # tools/setup.sh installs this; by hand: .venv/bin/pip install -r requirements.txt
 # The segmentation stage (01) also needs requirements-ml.txt.
-numpy==2.4.6
+numpy==2.4.6              # needs Python >= 3.11 (PyPI requires_python), like scipy below
 pillow==12.3.0
 opencv-python-headless==5.0.0.93   # macOS wheels: arm64 on macOS 13+, x86_64 on macOS 14+
-scipy==1.17.1
+scipy==1.17.1             # needs Python >= 3.11 (PyPI requires_python)
 shapely==2.1.2
 PyYAML==6.0.3
 # DDS encoding / verification (src/cfm/img_dds.py)

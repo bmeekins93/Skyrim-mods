@@ -50,11 +50,29 @@ def run(cmd, cwd=None):
     subprocess.run([str(c) for c in cmd], cwd=cwd, check=True)
 
 
+def sparse_text(sparse) -> str:
+    return "\n".join("/" + p for p in sparse) + "\n"
+
+
 def fetch(url, sha, dest, sparse=None):
+    """Check out `sha` of `url` into `dest` (shallow, blobs on demand), limited to `sparse` paths.
+    A checkout already at `sha` still gets the current sparse list: when PYNIFLY_SPARSE grew, the
+    list is rewritten and `git sparse-checkout reapply` fetches the new files from the remote
+    (the clone is partial, --filter=blob:none, so missing blobs are fetched lazily)."""
     if (dest / ".git").exists():
         head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=dest, capture_output=True, text=True).stdout.strip()
         if head == sha:
-            print(f"{dest.name}: already at {sha[:10]}")
+            listing = dest / ".git" / "info" / "sparse-checkout"
+            if sparse and (not listing.exists() or listing.read_text() != sparse_text(sparse)):
+                run(["git", "config", "core.sparseCheckout", "true"], cwd=dest)
+                listing.write_text(sparse_text(sparse))
+                run(["git", "sparse-checkout", "reapply"], cwd=dest)
+                missing = [p for p in sparse if not (dest / p).exists()]
+                if missing:
+                    sys.exit(f"{dest.name}: sparse paths missing after reapply: {missing}")
+                print(f"{dest.name}: at {sha[:10]}, sparse list updated")
+            else:
+                print(f"{dest.name}: already at {sha[:10]}")
             return
     dest.mkdir(parents=True, exist_ok=True)
     if not (dest / ".git").exists():
@@ -63,7 +81,7 @@ def fetch(url, sha, dest, sparse=None):
     if sparse:
         run(["git", "config", "core.sparseCheckout", "true"], cwd=dest)
         run(["git", "sparse-checkout", "init", "--no-cone"], cwd=dest)
-        (dest / ".git" / "info" / "sparse-checkout").write_text("\n".join("/" + p for p in sparse) + "\n")
+        (dest / ".git" / "info" / "sparse-checkout").write_text(sparse_text(sparse))
     run(["git", "fetch", "-q", "--depth", "1", "--filter=blob:none", "origin", sha], cwd=dest)
     run(["git", "checkout", "-q", "FETCH_HEAD"], cwd=dest)
 

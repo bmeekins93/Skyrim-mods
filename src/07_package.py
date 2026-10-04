@@ -76,6 +76,15 @@ ZIP_TIMESTAMP = (2026, 1, 1, 0, 0, 0)   # fixed, so the zip is byte-for-byte rep
 ASSET_NAME_RE = re.compile(r"^[a-z0-9_]+\.(nif|dds)$")
 
 DDS_FOURCC_OK = {b"DXT1", b"DXT5", b"DX10"}
+DDS_BLOCK_BYTES = {b"DXT1": 8, b"DXT5": 16, b"DX10": 16}   # BC1 8 bytes per 4x4 block; BC3/BC7 16
+# KEF's public source (cloned with git; HEAD 0fb5244, 2026-08-30), docs/SPID_NOTES.md section 13.
+KEF_SOURCE = "github.com/Teijirr/SkyrimKEFKeywordEquipFramework"
+# ManakinRace (player-home mannequins) as a SPID form-filter exclusion. FormID 0x10760A in
+# Skyrim.esm: Mutagen.Bethesda.FormKeys.SkyrimSE 3.4.0 Skyrim.Race.ManakinRace = 10760A:Skyrim.esm,
+# and F02K/Frostfall-Server @91c1694 skyrim-esm-references/races.json ("0010760A", keywords
+# ["ActorTypeNPC"]); tests/test_plugin.py FORBIDDEN_RACES. Same '-0xID~Plugin' syntax as the race
+# exclusions in docs/SPID_NOTES.md section 12.
+MANNEQUIN = "-0x10760A~Skyrim.esm"
 DXGI_BC7_UNORM = 98
 TEXTURE_SLOTS = 9                        # BSShaderTextureSet slots in Skyrim SE (nifly index 0-8)
 
@@ -211,13 +220,16 @@ def make_distr_ini(cfg: dict) -> str:
             f";            reads it and makes the NPC WEAR item 0x{ARMO_LOCAL_ID:X} of {plugin}.",
             ";            Without KEF the keyword is harmless and NPCs are expected to only carry",
             ";            the mask.",
-            ";   KEF's page (not tested here) says that when the NPC already wears another item in",
-            ";   that slot (55) the item is 'NOT added to the NPC's inventory and is not equipped',",
-            ";   which implies that KEF normally adds the item itself. So with KEF an NPC will",
-            ";   probably carry TWO masks, one worn; the Item line stays as the fallback in case KEF",
-            ";   only equips. To force the mask on over another slot-55 item (KEF then unequips",
-            f";   that item), KEF's page says to append {KEF_FORCE_SUFFIX} to the keyword name:",
+            ";   What KEF does, read from its source (not tested in game here):",
+            f";   {KEF_SOURCE}, src/main.cpp.",
+            ";   KEF equips the copy the Item line adds and only adds one itself when the NPC has",
+            ";   none, so each NPC carries ONE mask. When the NPC already wears another item in that",
+            ";   slot (55), KEF neither adds nor equips the mask. To force it on over that item (KEF",
+            f";   then unequips the other item), append {KEF_FORCE_SUFFIX} to the keyword name:",
             f";   {keyword}{KEF_FORCE_SUFFIX} (below 100 % in both lines).",
+            ";   KEF looks at each NPC only once per game session and skips NPCs that are already",
+            ";   dead: after loading a save without restarting the game, and on corpses found dead,",
+            ";   the mask may be carried but not worn (quit and restart the game to re-equip).",
             ";   Both lines select the same NPCs; change both when you edit one. Below 100 % only the",
             ";   Keyword line has the chance and the Item line uses the keyword as its filter (two",
             ";   separate chance rolls would mostly pick different NPCs).",
@@ -275,6 +287,10 @@ def make_distr_ini(cfg: dict) -> str:
             ";   everyone except NPCs named Nazeem:",
             f";     Item = {form}|{STRING_FILTER},-Nazeem|NONE|NONE|-C|1|100",
             f";     Keyword = {keyword}|{STRING_FILTER},-Nazeem|NONE|NONE|-C|NONE|100",
+            ";   no player-home mannequins (ManakinRace also has ActorTypeNPC, so by default",
+            ";   mannequins get a mask too; no armature lists that race, so probably invisible):",
+            f";     Item = {form}|{STRING_FILTER}|{MANNEQUIN}|NONE|-C|1|100",
+            f";     Keyword = {keyword}|{STRING_FILTER}|{MANNEQUIN}|NONE|-C|NONE|100",
             ";   only one NPC in four, the same ones every launch (remove the '!' to re-roll each launch);",
             ";   the Item line follows the keyword:",
             f";     Item = {form}|{keyword}|NONE|NONE|-C|1|100",
@@ -287,6 +303,8 @@ def make_distr_ini(cfg: dict) -> str:
             f";     Item = {form}|{STRING_FILTER}|{beast}|NONE|-C|1|100",
             ";   everyone except NPCs named Nazeem:",
             f";     Item = {form}|{STRING_FILTER},-Nazeem|NONE|NONE|-C|1|100",
+            ";   no player-home mannequins (ManakinRace also has ActorTypeNPC):",
+            f";     Item = {form}|{STRING_FILTER}|{MANNEQUIN}|NONE|-C|1|100",
             ";   only one NPC in four, the same ones every launch (remove the '!' to re-roll each launch):",
             f";     Item = {form}|{STRING_FILTER}|NONE|NONE|-C|1|25!",
         ]
@@ -498,9 +516,21 @@ def game_path(raw: str) -> str | None:
     return "/".join(parts)
 
 
+def dds_expected_size(width: int, height: int, mips: int, fourcc: bytes) -> int:
+    """File size of a block-compressed DDS: 128-byte header (+20 for DX10) plus every mip level,
+    each max(1, ceil(w/4)) x max(1, ceil(h/4)) blocks of DDS_BLOCK_BYTES."""
+    size = 128 + (20 if fourcc == b"DX10" else 0)
+    for level in range(mips):
+        w, h = max(1, width >> level), max(1, height >> level)
+        size += max(1, (w + 3) // 4) * max(1, (h + 3) // 4) * DDS_BLOCK_BYTES[fourcc]
+    return size
+
+
 def dds_problems(path: Path) -> list[str]:
-    """Header sanity only; src/05_dds.py does the deep verification."""
-    data = path.read_bytes()[:148]
+    """Header sanity plus the file length the header implies (a truncated or padded file fails);
+    src/05_dds.py does the deep (decode) verification."""
+    whole = path.read_bytes()
+    data = whole[:148]
     if len(data) < 128 or data[:4] != b"DDS " or struct.unpack_from("<I", data, 4)[0] != 124:
         return [f"{path.name}: not a DDS file"]
     height, width = struct.unpack_from("<II", data, 12)
@@ -514,8 +544,13 @@ def dds_problems(path: Path) -> list[str]:
         problems.append(f"{path.name}: {mips} mip levels, expected a full chain")
     if fourcc not in DDS_FOURCC_OK:
         problems.append(f"{path.name}: unexpected FourCC {fourcc!r}")
-    elif fourcc == b"DX10" and struct.unpack_from("<I", data, 128)[0] != DXGI_BC7_UNORM:
+    elif fourcc == b"DX10" and (len(data) < 148 or struct.unpack_from("<I", data, 128)[0] != DXGI_BC7_UNORM):
         problems.append(f"{path.name}: DX10 header but not BC7_UNORM")
+    if not problems:
+        expected = dds_expected_size(width, height, mips, fourcc)
+        if len(whole) != expected:
+            problems.append(f"{path.name}: {len(whole)} bytes, the header implies {expected} "
+                            "(truncated or damaged file)")
     return problems
 
 
@@ -762,7 +797,12 @@ def check_ini(pkg_dir: Path, cfg: dict, plugin_name: str, ini_name: str, report:
         if len(items) == 1 and len(keywords) == 1:
             problems += [f"{ini_name}: {p}" for p in pairing_problems(items[0], keywords[0], name)]
     expected = make_distr_ini(cfg)
-    if text != expected:
+    if text != expected and text.replace("\r\n", "\n") == expected:
+        problems.append(f"{ini_name}: has Windows (CRLF) line endings, otherwise it matches; git "
+                        "converted it on checkout (core.autocrlf). SPID reads it either way, but the "
+                        "zip and this check expect the generated LF file: re-checkout with the repo's "
+                        ".gitattributes (dist/** -text) or rebuild the package")
+    elif text != expected:
         problems.append(f"{ini_name}: differs from what config.yaml generates (rebuild the package)")
     report["equip_method"] = method
     report["kef_keyword"] = name

@@ -1,0 +1,3 @@
+# The shipped package must stay byte-identical to what src/07_package.py validated: no
+# line-ending conversion (core.autocrlf) for the DISTR ini, and the binaries stay binary.
+dist/** -text

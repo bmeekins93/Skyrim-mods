@@ -11,7 +11,8 @@
 # The ML packages are optional: if they cannot be installed (e.g. PyTorch 2.14.1 has macOS wheels
 # only for Apple Silicon on macOS 14+), setup continues with a warning; then copy work/outline.json
 # and work/matte.png from a machine that ran the segment stage and build with --skip-ml.
-# Windows: use WSL2 (Ubuntu) and run this script there, or follow "Rebuild on Windows" in README.md.
+# Windows: use WSL2 (Ubuntu) and run this script there, or follow "Rebuild from source -> Windows"
+# in README.md.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -63,20 +64,26 @@ esac
 # --------------------------------------------------------------------------- Python
 pick_python() {
   if [ -n "${PYTHON:-}" ]; then echo "$PYTHON"; return; fi
-  # 3.11 matches the reference environment the requirements were pinned in
-  for candidate in python3.11 python3.12 python3.13 python3.10 python3; do
+  # 3.11 matches the reference environment the requirements were pinned in; numpy 2.4.6 and
+  # scipy 1.17.1 (requirements.txt) need Python 3.11 or newer (PyPI requires_python >=3.11)
+  for candidate in python3.11 python3.12 python3.13 python3; do
     if have "$candidate"; then echo "$candidate"; return; fi
   done
   die "no python3 found; install Python 3.11 (macOS: brew install python@3.11)"
 }
 
 step "Python virtual environment (.venv)"
+PY_RANGE_CHECK='import sys; v = sys.version_info; sys.exit(0 if (3, 11) <= v[:2] <= (3, 13) else 1)'
 if [ -x .venv/bin/python ]; then
   echo ".venv exists: $(.venv/bin/python --version)"
+  .venv/bin/python -c "$PY_RANGE_CHECK" \
+    || die ".venv uses $(.venv/bin/python --version 2>&1); need Python 3.11-3.13 (numpy 2.4.6 / scipy 1.17.1): delete .venv and re-run with PYTHON=python3.11"
 else
   PY="$(pick_python)"
-  "$PY" -c 'import sys; v = sys.version_info; sys.exit(0 if (3, 10) <= v[:2] <= (3, 13) else 1)' \
-    || die "$PY is $("$PY" --version 2>&1); need Python 3.10-3.13 (3.11 recommended)"
+  "$PY" -c "$PY_RANGE_CHECK" \
+    || die "$PY is $("$PY" --version 2>&1); need Python 3.11-3.13 (3.11 recommended; numpy 2.4.6 and scipy 1.17.1 need >= 3.11)"
+  "$PY" -c 'import ensurepip, venv' >/dev/null 2>&1 \
+    || die "$PY cannot create virtual environments (no ensurepip); Debian/Ubuntu: sudo apt install python3.11-venv (match your Python version)"
   echo "creating .venv with $("$PY" --version)"
   "$PY" -m venv .venv
 fi
@@ -94,6 +101,10 @@ echo "ok"
 
 # --------------------------------------------------------------------------- NiflyDLL
 step "NiflyDLL (PyNifly's NIF library, built for $OS)"
+have git || die "'git' is required (Linux: apt install git; macOS: xcode-select --install)"
+# Always: keeps PyNifly/nifly at the pinned commits and re-applies the sparse list (reference NIFs
+# added to PYNIFLY_SPARSE later); prints "already at ..." and returns quickly when up to date.
+"$VPY" tools/nifly/build_niflydll.py --fetch-only
 if [ -f "$NIFLY_DLL" ] && [ "$REBUILD_NIFLY" = 0 ]; then
   echo "$NIFLY_DLL exists (use --rebuild-nifly to rebuild)"
 else
@@ -177,7 +188,11 @@ if have dotnet; then
   SDKS="$(dotnet --list-sdks 2>/dev/null || true)"
   echo "$SDKS"
   if echo "$SDKS" | grep -Eq '^(1[0-9]|[2-9][0-9])\.'; then
-    dotnet tool restore >/dev/null && echo "local tools restored (Spriggit, see .config/dotnet-tools.json)"
+    if dotnet tool restore >/dev/null; then
+      echo "local tools restored (Spriggit, see .config/dotnet-tools.json)"
+    else
+      warn "dotnet tool restore failed: Spriggit (plugin stage) is unavailable; check the network/NuGet and re-run 'dotnet tool restore'"
+    fi
   else
     warn ".NET SDK 10 or newer is needed for src/plugin (net10.0); install it from https://dotnet.microsoft.com/download"
   fi

@@ -23,6 +23,13 @@ Blocked:
         shell, interpreter or xargs.
   Plain reads (ls, cat, find, grep, ...) stay allowed, and so does text that only *mentions* the
   folder in a git/gh message or a pytest -k/-m expression.
+  Shell words and the hook's cwd are also checked after resolving symlinks (a short link to the
+  long CrossOver bottle path counts as the Data folder it points to); relative words are resolved
+  against the hook input's cwd.
+  PowerShell  (Claude Code's PowerShell tool, the default shell on Windows; the matcher in
+      settings.json must list it): any command that names Data or the game folder, or runs there
+      (cwd or Set-Location), is blocked unless every command in it is a known read-only cmdlet
+      (Get-ChildItem, Get-Content, Test-Path, ...) and no redirection points into Data.
 Limits: a path hidden in a variable or built at run time cannot be seen; build into
 dist/CardboardFaceMask/ and let the user install it.
 """
@@ -386,6 +393,32 @@ def is_relative(path: str) -> bool:
     return not path.startswith(("/", "~", "$")) and not re.match(r"^[A-Za-z]:[\\/]", path)
 
 
+# The hook input's cwd, used to resolve relative words through symlinks (set per tool call).
+_BASE_DIR: list[str] = []
+
+
+def resolved_place(word: str) -> str | None:
+    """Where a word points once symlinks are resolved: a link (or a path through a link) to the
+    Data folder or the game folder counts as that folder. Relative words are resolved against the
+    hook input's cwd; words that are options or start with a variable are skipped."""
+    if not word or word.startswith(("-", "$")) or "\0" in word:
+        return None
+    try:
+        path = os.path.expanduser(word)
+        if is_relative(word):
+            if not _BASE_DIR:
+                return None
+            path = os.path.join(_BASE_DIR[0], path)
+        real = os.path.realpath(path)
+    except (OSError, ValueError):
+        return None
+    if is_data_file_path(real):
+        return "data"
+    if GAME_ROOT_RE.search(real):
+        return "game"
+    return None
+
+
 def place(word: str, state: str | None) -> str | None:
     """Where a shell word points: 'data' (a Data folder or inside it), 'game' (the game folder
     that contains Data) or None. state is where the command runs (after cd)."""
@@ -400,7 +433,7 @@ def place(word: str, state: str | None) -> str | None:
             return "game"
     if GAME_ROOT_RE.search(word.replace("\\ ", " ")):
         return "game"
-    return None
+    return resolved_place(word)
 
 
 def after_cd(target: str | None, state: str | None) -> str | None:
@@ -537,13 +570,161 @@ def analyse(command: str, state: str | None, depth: int = 0) -> str | None:
 
 
 def bash_reason(command: str, cwd: str | None = None) -> str | None:
+    _BASE_DIR[:] = [cwd] if cwd else []
     state = after_cd(cwd, None) if cwd else None
     if state is None and not mentions_game(command):
-        return None
+        # No game path in the text: only a symlink into Data could still be involved. A command
+        # that cannot be parsed is let through here, as before.
+        try:
+            return analyse(command, state)
+        except (ParseError, ValueError):
+            return None
     try:
         return analyse(command, state)
     except (ParseError, ValueError) as e:
         return f"cannot parse a command that mentions a Skyrim game folder ({e})"
+
+
+# --------------------------------------------------------------------------- PowerShell
+
+# Cmdlets and aliases that only read (or only move the current location). Everything else
+# (Copy-Item, Move-Item, Remove-Item, New-Item, Set-Content, Out-File, Expand-Archive, robocopy,
+# cmd, Start-Process, Invoke-Expression, ForEach-Object, ...) counts as possibly writing.
+PS_READ_ONLY = {
+    "get-childitem", "gci", "ls", "dir", "get-content", "gc", "cat", "type", "test-path",
+    "get-item", "gi", "get-itemproperty", "gp", "resolve-path", "rvpa", "get-filehash",
+    "select-string", "sls", "measure-object", "measure", "write-output", "echo", "write-host",
+    "get-location", "gl", "pwd", "split-path", "join-path", "select-object", "select",
+    "sort-object", "sort", "format-list", "fl", "format-table", "ft", "out-host", "out-null",
+    "compare-object", "get-acl", "get-psdrive",
+}
+PS_CD = {"set-location", "sl", "cd", "chdir", "push-location", "pushd"}
+PS_POPD = {"pop-location", "popd"}
+PS_SEPARATORS = set(";|&{}()\n\r")
+PS_HARMLESS_TARGETS = {"$null", "null", "nul", "&1", "&2"}
+
+
+def ps_segments(command: str) -> list[tuple[list[str], list[str]]]:
+    """Split a PowerShell command into simple commands: (words, redirection targets) each.
+    Pipes, ';', '&', '&&', '||', script blocks {...} and (sub)expressions (...) all start a new
+    command, so a cmdlet inside ForEach-Object { ... } or $( ... ) is checked on its own.
+    Quotes: '...' (with '' inside) and "..." (backtick escapes); backtick escapes outside quotes."""
+    segments: list[tuple[list[str], list[str]]] = []
+    words: list[str] = []
+    targets: list[str] = []
+    word: list[str] = []
+    has_word = False
+    redirect_next = False
+    i = 0
+
+    def end_word():
+        nonlocal word, has_word, redirect_next
+        if has_word:
+            (targets if redirect_next else words).append("".join(word))
+            redirect_next = False
+        word, has_word = [], False
+
+    def end_segment():
+        nonlocal words, targets
+        end_word()
+        if words or targets:
+            segments.append((words, targets))
+        words, targets = [], []
+
+    while i < len(command):
+        ch = command[i]
+        if ch == "'":
+            end = i + 1
+            while True:
+                end = command.find("'", end)
+                if end < 0:
+                    raise ParseError("unclosed quote")
+                if command.startswith("''", end):
+                    end += 2
+                    continue
+                break
+            word.append(command[i + 1:end].replace("''", "'"))
+            has_word = True
+            i = end + 1
+            continue
+        if ch == '"':
+            i += 1
+            while i < len(command) and command[i] != '"':
+                if command[i] == "`" and i + 1 < len(command):
+                    i += 1
+                word.append(command[i])
+                i += 1
+            if i >= len(command):
+                raise ParseError("unclosed quote")
+            has_word = True
+            i += 1
+            continue
+        if ch == "`" and i + 1 < len(command):
+            word.append(command[i + 1])
+            has_word = True
+            i += 2
+            continue
+        if ch == ">":
+            # n>, n>>, >, >>, n>&1: the next word is the target
+            if has_word and "".join(word) in ("1", "2", "3", "4", "5", "6", "*"):
+                word, has_word = [], False
+            else:
+                end_word()
+            i += 1
+            while i < len(command) and command[i] == ">":
+                i += 1
+            if command.startswith("&", i) and i + 1 < len(command) and command[i + 1].isdigit():
+                targets.append(command[i:i + 2])
+                i += 2
+                continue
+            redirect_next = True
+            continue
+        if ch in PS_SEPARATORS:
+            end_segment()
+            i += 1
+            continue
+        if ch.isspace():
+            end_word()
+            i += 1
+            continue
+        word.append(ch)
+        has_word = True
+        i += 1
+    end_segment()
+    return segments
+
+
+def powershell_reason(command: str, cwd: str | None = None) -> str | None:
+    """PowerShell pipes objects, so a path named in one command (Get-ChildItem Data) can reach a
+    writing command later in the pipeline (| Remove-Item) without being named there. So this is
+    deliberately coarse: once the command names Data or the game folder (as text or through a
+    symlink), or runs there (cwd), every command in it must be read-only."""
+    _BASE_DIR[:] = [cwd] if cwd else []
+    state = after_cd(cwd, None) if cwd else None
+    try:
+        segments = ps_segments(command)
+    except ParseError as e:
+        if state or mentions_game(command):
+            return f"cannot parse a PowerShell command that mentions a Skyrim game folder ({e})"
+        return None
+    named = names_data_or_game(command) or any(
+        place(w, None) for words, targets in segments for w in [*words, *targets])
+    if not (state or named):
+        return None
+    for words, targets in segments:
+        for target in targets:
+            if target.lower() not in PS_HARMLESS_TARGETS and place(target, state):
+                return f"PowerShell output redirection into a Skyrim Data folder ({target!r})"
+        if not words:
+            continue
+        cmd = words[0].lower()
+        if cmd in PS_READ_ONLY or cmd in PS_CD or cmd in PS_POPD:
+            continue
+        if named:
+            return (f"PowerShell '{words[0]}' in a command that names a Skyrim Data or game folder "
+                    "(only read-only cmdlets are allowed there)")
+        return f"PowerShell '{words[0]}' runs inside the Skyrim game folder"
+    return None
 
 
 # --------------------------------------------------------------------------- main
@@ -554,6 +735,8 @@ def decide(payload: dict) -> str | None:
     cwd = payload.get("cwd")
     if tool == "Bash":
         return bash_reason(str(tool_input.get("command", "")), cwd if isinstance(cwd, str) else None)
+    if tool == "PowerShell":
+        return powershell_reason(str(tool_input.get("command", "")), cwd if isinstance(cwd, str) else None)
     return file_target_reason(tool_input, str(cwd or os.getcwd()))
 
 

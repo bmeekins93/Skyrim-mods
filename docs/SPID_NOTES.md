@@ -2,8 +2,8 @@
 
 Everything about SPID below was read from source code, not from memory. Citations are `file:line`
 in the repositories listed here (cloned 2026-10-03 with `git clone`; github.com web pages were not
-used). KEF (section 13) is the exception: its source could not be found, so that section separates
-what the SPID source proves from what only KEF's Nexus page says.
+used). KEF (section 13) was read from its own public source, listed below with the CommonLib
+fork it pins.
 
 | Repo | Commit | What it is |
 |---|---|---|
@@ -12,6 +12,8 @@ what the SPID source proves from what only KEF's Nexus page says.
 | powerof3/CLibUtil | `88d78d94464a04e582669beac56346edbbc4a662` | the exact ref SPID's vcpkg overlay port pins (`cmake/ports/clib-util/portfile.cmake`); headers live in `include/CLIBUtil/` |
 | powerof3/po3-Tweaks | `47e8b72118b2e666af3c03fc3baaec8f73972f94` (2026-08-25) | powerofthree's Tweaks (EditorID cache) |
 | ianpatt/skse64 | `25b72352adb6543fa6d0bd3795780672b2e238e0` (2026-09-06) | SKSE64 plugin loader |
+| Teijirr/SkyrimKEFKeywordEquipFramework | `0fb5244` (2026-08-30, "Update commonlibng") | KEF. Found by a GitHub code search for `KEFEquip`; cloned with `git clone`. Paths below starting `KEF` are in this repo (`src/main.cpp`, `xmake.lua`) |
+| alandtse/CommonLibVR | `8b032fa992750d654d6d38a33731714d8b86be1f` (2026-08-30, "chore(release): 7.0.0") | the CommonLibSSE-NG fork KEF pins as submodule `lib/commonlibsse-ng` (`git ls-tree 0fb5244 lib/commonlibsse-ng`); paths below starting `KEF-CL` |
 
 SPID also ships its own manual, `resources/SPID Complete Reference.txt` ("as of SPID 7.3.0"); it
 agrees with the code everywhere it is cited below.
@@ -182,7 +184,19 @@ passed as empty strings (`Parser.h:79-82`). `NONE` (any case) and empty both mea
 * **The player is never processed**: `should_process_NPC` returns `!a_npc->IsPlayer() && !IsDeleted()`
   (`DistributeManager.cpp:8-11`). `config.yaml: distribute_to_player` therefore has no effect; use the
   console to try the mask yourself.
-* Dead NPCs are processed too unless the line has `-D` (`Distribute.cpp:197-199`).
+* Dead NPCs are processed too unless the line has `-D` (`Distribute.cpp:197-199`). KEF, however,
+  skips actors that are dead when it first sees them (`KEF src/main.cpp:46-48`), so NPCs found
+  already dead (placed corpses) carry an unworn mask in their loot. Adding `-D` would not be a
+  safe fix: SPID processes each *base* NPC once per session, so a dead first actor would cost the
+  living actors of the same base their copy.
+* The `ActorTypeNPC` string filter also selects mannequins: vanilla ManakinRace
+  (`0x10760A` in `Skyrim.esm`; Mutagen.Bethesda.FormKeys.SkyrimSE 3.4.0 `Skyrim.Race.ManakinRace`,
+  and F02K/Frostfall-Server @91c1694 `skyrim-esm-references/races.json`, keywords
+  `["ActorTypeNPC"]`) carries the keyword, and string filters match race keywords
+  (`LookupNPC.cpp:65-70, 93-104`). No armature lists ManakinRace (`src/plugin/Generator/Vanilla.cs`),
+  so the mask is probably invisible on mannequins. The shipped lines keep `NONE` form filters (the
+  lines are fixed in CLAUDE.md); the ini has a commented pair with `-0x10760A~Skyrim.esm`
+  (section 12).
 * Nothing is written to the save by SPID itself: distribution is redone from scratch on every launch
   (reference lines 63-64).
 
@@ -207,11 +221,12 @@ passed as empty strings (`Parser.h:79-82`). `NONE` (any case) and empty both mea
   then skips the NPC unless the keyword ends in `_forceEquip_true`, section 13), the
   `non_playable` flag (config.yaml warns to test it before enabling), or a mod that re-applies
   outfits.
-* Can NPCs unequip it? SPID never equips items, so nothing marks the mask "prevent removal" (the
-  equip flag that locks a slot; see the comment at `Outfits/Helpers.h:21-23` - SPID passes `false`
-  even for outfits, `Outfits/Helpers.h:24`). Whether KEF sets that flag is not known. The mask is an
-  ordinary inventory item: the engine may swap it when it re-evaluates worn gear, and it can be
-  pickpocketed, traded or looted while it is playable.
+* Can NPCs unequip it? SPID never equips items (it passes `false` for "prevent removal", the equip
+  flag that locks a slot, even for outfits: comment at `Outfits/Helpers.h:21-23`, call at
+  `Outfits/Helpers.h:24`). KEF does set it: `EquipObject(actor, item, nullptr, 1, nullptr, false,
+  true, false, true)` (`KEF src/main.cpp:207`), whose 7th parameter is `a_forceEquip`
+  (`KEF-CL include/RE/A/ActorEquipManager.h:19`), the flag SPID's comment calls prevent removal.
+  The mask can still be pickpocketed, traded or looted while it is playable.
 * `Skin =` would replace the NPC's body skin (`Distribute.cpp:107-115`) and `Outfit =` would replace
   the whole outfit, so neither is suitable here.
 
@@ -290,17 +305,21 @@ Keyword = KEFEquip_0x800_CardboardFaceMask_esp|ActorTypeNPC|-0x13740~Skyrim.esm,
 ; everyone except NPCs whose name is exactly "Nazeem"
 Item = 0x800~CardboardFaceMask.esp|ActorTypeNPC,-Nazeem|NONE|NONE|-C|1|100
 Keyword = KEFEquip_0x800_CardboardFaceMask_esp|ActorTypeNPC,-Nazeem|NONE|NONE|-C|NONE|100
+; no player-home mannequins (ManakinRace 0x10760A, section 8)
+Item = 0x800~CardboardFaceMask.esp|ActorTypeNPC|-0x10760A~Skyrim.esm|NONE|-C|1|100
+Keyword = KEFEquip_0x800_CardboardFaceMask_esp|ActorTypeNPC|-0x10760A~Skyrim.esm|NONE|-C|NONE|100
 ; one NPC in four, the same NPCs every launch for a character ('!', section 7); the Item line
 ; follows the keyword (section 13)
 Item = 0x800~CardboardFaceMask.esp|KEFEquip_0x800_CardboardFaceMask_esp|NONE|NONE|-C|1|100
 Keyword = KEFEquip_0x800_CardboardFaceMask_esp|ActorTypeNPC|NONE|NONE|-C|NONE|25!
 ```
 
-With `equip_method: engine` the examples are the three `Item` lines alone (the last one with
+With `equip_method: engine` the examples are the four `Item` lines alone (the last one with
 `ActorTypeNPC` and `25!`). Form-filter exclusions use FormIDs so they never depend on EditorID
 lookup. The race IDs are ArgonianRace 0x013740, KhajiitRace 0x013745, ArgonianRaceVampire 0x08883A
 and KhajiitRaceVampire 0x088845, each confirmed by two sources in `tests/test_plugin.py`
-(`SECOND_SOURCE`).
+(`SECOND_SOURCE`), and ManakinRace 0x10760A (Mutagen FormKeys 3.4.0 and the Frostfall dump,
+section 8; `tests/test_plugin.py` `FORBIDDEN_RACES`).
 
 ## 13. Equipping: KEF
 
@@ -352,74 +371,88 @@ equipping; neither needs Papyrus.
   (`Distribute.h:192`, `LookupNPC.cpp:86-91, 117-120`), so exactly the NPCs with the keyword get the
   mask.
 
-### What KEF's Nexus page says (not verified against code)
+### What KEF's source says (commit `0fb5244`)
 
-Nexus pages are blocked here (HTTP 403), and so are mirrors (schaken-mods.com: Cloudflare 403,
-web.archive.org: connection reset). The following comes from web-search snippets of the KEF page
-and its changelog, read 2026-10-03; quotes are as the snippets gave them (the page itself was not
-seen, so a search engine may have shortened them):
+KEF's Nexus page could not be opened here (HTTP 403); search-engine extracts of it gave the keyword
+format and examples. Its source settles the rest. That the Nexus DLL is built from this source is
+an inference, but a strong one: `xmake.lua` names the project `KeywordEquipFramework` (author
+`ziman99`; the Nexus author is ziman62), and the commit history matches the Nexus changelog (leveled-list
+support = v3, "Update commonlibng version" 2026-08-29 = v4 "Update to alandtse commonlibng
+version", "Update commonlibng" 2026-08-30 = v5 and the page's last update). The predecessor repo
+Teijirr/SkyrimKeywordEquipFramework (`1de459e`) has the same logic in `src/plugin.cpp`.
 
-* "a lightweight, zero-script SKSE plugin that automatically makes NPCs equip items (optionally
-  distributed to them via SPID) based on simple keyword syntax"; "create a SPID _DISTR.ini file,
-  distribute a keyword instead of an item"; requirements SKSE64 and Address Library, SPID
-  recommended; "compatible with all Skyrim versions (SE, AE, VR)"; no ESP needed.
-* Format `Keyword = KEFEquip_0x[FORMID]_[MODNAME]_[EXTENSION]|... (rest of your SPID line)`:
-  `0x[FORMID]` "the Hexadecimal FormID of the item you want equipped (e.g., 800)", `[MODNAME]` "the
-  name of the plugin containing the item record", `[EXTENSION]` esp, esm or esl.
-  Example: `Keyword = KEFEquip_0x800_MyCoolAmulet_esp|ActorTypeNPC|NONE|NONE|F /-C|NONE|33`.
-* How it works: it "hooks into the Load3D method and scans NPCs for any keyword starting with
-  KEFEquip. When it finds one, it parses the FormID and Mod Name directly out of the keyword's name
-  string and natively fires an equipment update."
-* Changelog: v3 "Added basic Leveled List support - if the formId you distribute is a leveled list
-  formId, KEF will pick a random item from the LL and equip it"; v4 "Update to alandtse commonlibng
-  version, which should be compatible with latest skyrim version"; v5 "Update commonlibng for new
-  skyrim update".
-* Second example, with an optional suffix (search for the exact phrase
-  `"KEFEquip_0x803_Kad_AkaviriHats_esp"`, 2026-10-03, hit: the KEF page):
-  `Keyword = KEFEquip_0x803_Kad_AkaviriHats_esp_forceEquip_true|ActorTypeNPC|NONE|NONE|M|NONE|1`.
-  The plugin is `Kad_AkaviriHats.esp` (KEF's companion mod "Akaviri Hats Pack - SPID - KEF",
-  <https://www.nexusmods.com/skyrimspecialedition/mods/185275>, needs that mod, SPID and KEF).
-* Occupied slots (searches `Keyword Equip Framework KEFEquip forceEquip_true slot already used` and
-  `"Keyword Equip Framework" "not added to the NPC's inventory"`, 2026-10-03, hit: the KEF page):
-  "By default, if the slot is already used on the NPC, the item is NOT added to the NPC's inventory
-  and is not equipped." The `_forceEquip_true` suffix "forces the item to be equipped, even if the
-  slot is already used, which will unequip the previous item in that slot."
-* The page also says (the snippets paraphrase it, so no exact quote) that KEF is meant to
-  complement existing outfits with accessories, not to assign whole outfits.
+* **When it runs**: a hook on `Character` vfunc `0x6A` (`KEF src/main.cpp:219-240`), which is
+  `Load3D` (`KEF-CL include/RE/T/TESObjectREFR.h:286`), calls `ProcessKEFKeywords` after the 3D
+  loaded. The hook is installed at `kDataLoaded` (`main.cpp:245-257`).
+* **Once per actor per game session**: a static `g_ProcessedActors` set (`main.cpp:9`); an actor
+  already in it returns at once (`main.cpp:41-43`); every processed actor is added at the end,
+  equipped or not (`main.cpp:216`), and dead or keyword-less actors are added immediately
+  (`main.cpp:46-48`). Nothing clears the set (its only uses are lines 9, 41, 47, 216; the
+  `kPreLoadGame`/`kPostLoadGame` cases are empty, `main.cpp:258-263`). SPID's base-container mask
+  and keyword stay for the whole session too (section 8). So after loading a save **without
+  quitting** (death reload, older save), NPCs KEF already handled in that session whose saved state
+  lacks the worn mask keep SPID's copy unworn until the game is restarted; a new 3D load (leaving
+  the cell) does not help.
+* **Dead actors are skipped** (`main.cpp:46`), see section 8.
+* **Keyword parsing** (`main.cpp:78-102`): the text after `KEFEquip_` (9 characters), an optional
+  `_forceEquip_true` / `_forceEquip_1` suffix cut off at its last occurrence, then FormID = text
+  before the first `_`, plugin = text between the first and the last `_`, extension = text after
+  the last `_`. `KEFEquip_0x800_CardboardFaceMask_esp` gives `stoul("0x800", 16)` = 0x800 and
+  `CardboardFaceMask.esp`; underscores inside the plugin name are kept.
+* **Lookup**: `TESDataHandler::LookupForm(0x800, "CardboardFaceMask.esp")` (`main.cpp:117`), which
+  in the pinned CommonLib builds `compileIndex << 24` + `smallFileCompileIndex << 12` + the local ID
+  (`KEF-CL src/RE/T/TESDataHandler.cpp:125-140`), i.e. the correct ID for an ESL-flagged plugin.
+  A failure logs `Failed to resolve form [800] from plugin CardboardFaceMask.esp` (`main.cpp:120`).
+* **Occupied slot**: without `forceEquip`, if the actor already wears an armor in the item's slot
+  mask, KEF does nothing for it (`main.cpp:178-188`): no copy added, nothing equipped.
+* **Adding**: KEF counts the item in `a_actor->GetInventory()` (`main.cpp:51, 167-176`), which
+  includes the base NPC's container (`KEF-CL src/RE/T/TESObjectREFR.cpp:423-472`,
+  `ForEachContainerObject ... it->second.first += a_entry.count`), where SPID's `Item` line put the
+  mask in the same pass that added the keyword (section 9). It adds a copy only when the count is
+  `<= 0` (`main.cpp:194-199`). So with both lines each NPC carries **one** mask, worn; the `Item`
+  line still supplies the carried mask when slot 55 is taken, and keeps `equip_method: engine`
+  meaningful.
+* **Equipping**: `EquipObject(actor, item, nullptr, 1, nullptr, false, true, false, true)`
+  (`main.cpp:207`): not queued, `a_forceEquip` = true (prevent removal, section 9), no sound, apply
+  now. Then it logs `SUCCESS - Item <name> equipped on actor <name>` (`main.cpp:209`).
+* **Log and DLL name**: the xmake target and plugin name are `KeywordEquipFramework`
+  (`xmake.lua:2, 38-47`), so the DLL is expected as `KeywordEquipFramework.dll`; CommonLib's
+  `SKSE::Init` opens `<SKSE log folder>/<plugin name>.log` by default (`KEF-CL
+  include/SKSE/API.h:15`, `src/SKSE/API.cpp:97-98`, `src/SKSE/Logger.cpp:126-135`), i.e.
+  `KeywordEquipFramework.log`.
+* **Runtime 1.7.104**: the pinned CommonLib's plugin declaration defaults are
+  `StructCompatibility::Independent` at offset 0x300 (= `versionIndependenceEx`
+  `kVersionIndependentEx_NoStructUse`) and an address-library `RuntimeCompatibility` at 0x304
+  (= `kVersionIndependent_AddressLibraryPostAE`) (`KEF-CL include/SKSE/Interfaces.h:370-378,
+  533-586, 620, 631, 642-643`), without the V5 bit. SKSE 2.3.1 demands the V5 bit only from DLLs
+  built before 2025-05-26 (skse64 `PluginManager.cpp:564-576`) and accepts NoStructUse for the
+  1.6.629 struct check (`PluginManager.cpp:580-588`); the pinned CommonLib also reads the new
+  address-library format (`KEF-CL src/REL/IDDB.cpp:158`). So a DLL built from this source on
+  2026-08-30 should load on 1.7.104 when `versionlib-1-7-104-0.bin` is installed.
+* License: GPL-3.0 (`LICENSE`, `xmake.lua:6`).
 
-What follows from these snippets for this mod (inference, not verified):
+From the Nexus page (search extracts, 2026-10-03; consistent with the source): the format
+`KEFEquip_0x[FORMID]_[MODNAME]_[EXTENSION]`, the example `KEFEquip_0x800_MyCoolAmulet_esp`, the
+second example `KEFEquip_0x803_Kad_AkaviriHats_esp_forceEquip_true` (plugin `Kad_AkaviriHats.esp`),
+"compatible with all Skyrim versions (SE, AE, VR)", and that KEF complements outfits with
+accessories rather than replacing outfits.
 
-* **KEF very probably adds the item itself.** "the item is NOT added to the NPC's inventory" in the
-  occupied-slot case only makes sense if KEF adds it otherwise; the leveled-list feature ("pick a
-  random item from the LL and equip it") cannot rely on the NPC already owning that random pick;
-  and the instructions say to "distribute a keyword instead of an item". The ini still keeps the
-  `Item` line while this is unverified, so with KEF installed an NPC will probably carry **two**
-  masks, one of them worn. That is harmless (weight 0, value 0), and the
-  `Item` line is the fallback if KEF turns out to only equip.
-* **Underscores in the plugin name work** for KEF: its own example names `Kad_AkaviriHats.esp`,
-  so KEF presumably does not split the keyword at every `_`. The generator accepts letters
-  and digits joined by single `_` (`KEF_MODNAME_RE`), but refuses on purpose what no example shows:
-  spaces, dots, leading/trailing/double `_`, and `_` parts named `esp`, `esm`, `esl` or
-  `forceEquip` (they could be mistaken for KEF's own tokens). `CardboardFaceMask` is unaffected.
-* **A mask is skipped when the NPC already wears something in slot 55**, e.g. an accessory from
-  another mod that uses the same slot. Then KEF neither adds its copy nor equips anything; SPID's
-  `Item` copy stays in the inventory unworn.
-  Appending `_forceEquip_true` to the keyword name
-  (`KEFEquip_0x800_CardboardFaceMask_esp_forceEquip_true`) forces the mask on and unequips the
-  other item. The generator does not do this by default (it would take accessories off NPCs); the
-  name is still an EditorID for SPID (no `~`, no `.es`, not hex), and below 100 % chance the
-  `Item` line's string filter must use the same new name.
+The generator still accepts only letters and digits joined by single `_` for the plugin stem
+(`KEF_MODNAME_RE`) and refuses `_` parts named `esp`, `esm`, `esl` or `forceEquip`: the source
+would mis-split a stem containing `_forceEquip_`, and dots or spaces were never needed.
+`CardboardFaceMask` is unaffected.
 
 ### Verified vs. unverified for this mod
 
 | Question | Status |
 |---|---|
 | Keyword syntax, sections, `NONE` count, keyword created by SPID, put on the base NPC, before the item | **verified** in SPID source (above) |
-| FormID format: local `0x800`, plugin name, `_esp` | matches KEF's published example exactly (`0x800` in an `.esp`, i.e. the first ID an ESL-flagged plugin can define), so the same local-ID-plus-plugin lookup SPID uses (section 3) is the natural reading. **Not verified** in KEF code. |
-| MODNAME with `_` | **shown in KEF's own example** (`Kad_AkaviriHats.esp`); the generator accepts letters and digits joined by single `_`. Spaces, dots and other shapes: **unknown**, refused on purpose. `CardboardFaceMask` has none of these. |
-| Does KEF add the item when the NPC does not have it? | **very probably yes, not verified**: the occupied-slot sentence ("the item is NOT added to the NPC's inventory"), the leveled-list feature and "distribute a keyword instead of an item" all point that way; "items (optionally distributed to them via SPID)" is the only wording that leaves it open. The ini keeps **both** lines, so expect **two** masks per NPC with KEF (one worn); if KEF only equips, the `Item` line supplies the mask. docs/TESTING.md rows 3.13 and 3b.2 settle it in game. |
-| Another item already worn in slot 55 | per the page snippet KEF then neither adds nor equips the item, unless the keyword ends in `_forceEquip_true` (then KEF unequips the other item). **Not verified**; not used by default. README troubleshooting and docs/TESTING.md 3.14 cover it. |
-| When does KEF run relative to SPID? | **unknown**. KEF reportedly hooks Load3D; SPID distributes from `ShouldBackgroundClone`/`InitLoadGame`, the latter only after 3D is loaded. If an NPC carries the mask unworn, leaving the cell and coming back (a new 3D load) is the first thing to try. |
-| Runtime 1.7.104 | **unknown** for a specific KEF file: the page claims all versions and v5 updated CommonLibSSE-NG "for new skyrim update". Check `skse64.log` (docs/TESTING.md 1.2). |
-| Source code | **not found**: KEF's source is mentioned as "SkyrimKeywordEquipFramework" in a search snippet, but `git clone https://github.com/ziman62/{SkyrimKeywordEquipFramework,KeywordEquipFramework,KEF}.git` all asked for credentials (no public repo under those names). |
-| DLL name, log file, whether KEF re-equips after an NPC takes the mask off, "prevent removal" flag, whether it adds another copy on every 3D load | **unknown**; none of this is claimed in the README. The user reads the DLL name from the KEF download (`SKSE/Plugins/*.dll`) and looks for it in `skse64.log` (docs/TESTING.md 0.1, 1.2); docs/TESTING.md 4.1-4.3 check that mask counts do not grow. |
+| FormID format: local `0x800`, plugin name, `_esp`; ESL lookup | **verified in KEF source**: parsing `main.cpp:78-102`, `LookupForm` with `smallFileCompileIndex` (`KEF-CL TESDataHandler.cpp:125-140`) |
+| MODNAME with `_` | **verified in KEF source** (first/last `_` split); the generator still restricts the shape on purpose |
+| Does KEF add the item when the NPC does not have it? | **verified in KEF source**: only when the NPC has none (`main.cpp:194-199`); SPID's copy counts, so **one** mask per NPC |
+| Another item already worn in slot 55 | **verified in KEF source**: nothing added or equipped unless `_forceEquip_true` (`main.cpp:178-188`); not used by default. README troubleshooting and docs/TESTING.md 3.14 cover it |
+| When does KEF run? | **verified in KEF source**: after `Load3D`, once per actor per game session, dead actors skipped (`main.cpp:9, 41-48, 216, 219-240`). Remedy for unworn masks after an in-session reload: restart the game (docs/TESTING.md 4.8) |
+| "Prevent removal" flag | **verified in KEF source**: set (`main.cpp:207`) |
+| DLL and log name | **from KEF's build files**: `KeywordEquipFramework.dll` / `KeywordEquipFramework.log` (expected; docs/TESTING.md 0.1, 1.2, 1.7) |
+| Runtime 1.7.104 | **verified for a DLL built from this source** (SKSE and CommonLib code above). Not verified: that the Nexus file is that build. Check `skse64.log` (docs/TESTING.md 1.2) |
+| Behaviour in the actual game | **not tested**: no game here. docs/TESTING.md sections 3, 3b and 4 check it |

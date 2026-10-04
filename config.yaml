@@ -17,8 +17,13 @@ edge_wobble_units: 0.04     # hand-cut jitter along the outline; 0 = clean die-c
 string_radius_units: 0.06
 string_sag: 0.6             # 0..1, how far the string droops at the back of the head
 string_asymmetry: 0.35      # 0..1, how lopsided the string is (one side rides higher)
-string_clearance_units: 1.0 # how far the string rides above the bald scalp at the back of the head,
-                            # i.e. over typical hair (0.15 = tight to the skull, hidden under hair)
+string_clearance_units: 1.0 # how far the string rides above the bald scalp at the sides and over the
+                            # ears (the back gets x (1 + string_back_swell)); 0.15 (minimum) = tight
+                            # to the skull, hidden under hair; at most 2.5
+string_back_swell: 0.75     # human: toward the back centre the clearance swells to
+                            # string_clearance_units x (1 + this), where hair hangs thickest;
+                            # 0 = level ring, 1.5 rides over thick dreads/manes (stiff hoop off a
+                            # bald head); 0..2 accepted
 tape_strip: true            # masking-tape strips holding the string on the back
 
 # --- Plugin / distribution ----------------------------------------------------

@@ -17,12 +17,15 @@ The look is a cheap party-mask string riding awkwardly over the hair (string_pat
 Clearance surface (ClearanceProfile): at every height, the convex hull of the bald head(s) within
 +-SLAB_HALF of that height, grown by the clearance plus the string radius. The clearance is
 c = string_clearance_units * CLEARANCE_FACTOR[kind] over the sides and the ears; toward the back
-centre it swells smoothly (cos^2 over +-BACK_HALF_WIDTH_DEG) to c * (1 + BACK_EXTRA[kind]),
+centre it swells smoothly (cos^2 over +-BACK_HALF_WIDTH_DEG) to c * (1 + back_swell(cfg, kind)),
 because hair hangs thickest over the back of the head - that is where the droop has to show over
-it. In front of the head centre it tapers (smoothstep in y) to STRING_HEAD_GAP + radius at the outer
-orbital rim (temples, where the string leaves the head toward the mask); only the head behind the
-orbital rim shapes the hull. The string pokes out of close-fitting helmets and hoods by design
-(03_mesh.py reports helmet-SMP.nif and a hood, and gates it against a reference hair mesh).
+it. back_swell is config string_back_swell for humans (BACK_EXTRA["human"] when the key is
+missing; 1.5 clears thick dreads such as maleorchair27.nif, 0 is a level ring) and BACK_EXTRA[kind]
+for the beast mesh. In front of the head centre it tapers (smoothstep in y) to STRING_HEAD_GAP +
+radius at the outer orbital rim (temples, where the string leaves the head toward the mask); only
+the head behind the orbital rim shapes the hull. The string pokes out of close-fitting helmets and
+hoods by design (03_mesh.py reports helmet-SMP.nif, a hood and a reference hair mesh; the hair's
+visibility is gated only at string_back_swell >= 1.5).
 For the beast mesh the hull is taken over the union of the Argonian and Khajiit heads; the string
 must clear the larger of the two everywhere, so the beast clearance factor is smaller (on the
 Argonian it rides the Khajiit's extra 1-1.6 units higher at the back)."""
@@ -53,11 +56,35 @@ EAR_TOP_GAP = 1.0       # the built tube's surface passes at least this far abov
 EAR_SAMPLE_STEP = 0.02  # the tube's centre-line segments are sampled this densely for the ear gap
 CROWN_MARGIN = 3.5      # the higher side's contact stays this far under the crown (else: a headband)
 CLEARANCE_FACTOR = {"human": 1.0, "beast": 0.7}   # x string_clearance_units over the sides / ears
-BACK_EXTRA = {"human": 1.5, "beast": 0.0}         # the back centre rides (1 + this) x that clearance
+BACK_EXTRA = {"human": 0.75, "beast": 0.0}        # the back centre rides (1 + this) x that clearance;
+                                                  # human: default of config string_back_swell
 BACK_HALF_WIDTH_DEG = 70.0  # the back swell fades out this far round from straight back
 SMOOTH_SIGMA = 0.5      # Gaussian smoothing of the centre line along its length (units)
 SMOOTH_STEP = 0.05      # arc-length resampling before smoothing
 UV_WRAP_TILES = 4       # twine u restarts every this many texture tiles (keeps half-float UVs exact)
+
+
+MAX_BACK_SWELL = 2.0   # string_back_swell above this is refused: 03_mesh.py's halo gates measure the
+                       # string against the configured swell, so they cannot catch a typo such as 6
+                       # (a ~7-unit hoop); 0-1.5 is the range the renders and tests cover
+
+
+def back_swell(cfg: dict, kind: str) -> float:
+    """How much the clearance swells toward the back centre: c_back = c_side * (1 + this). Humans:
+    config string_back_swell (default BACK_EXTRA["human"], 0 <= value <= MAX_BACK_SWELL); the beast
+    mesh: BACK_EXTRA[kind], not configurable (its clearance over the Argonian+Khajiit union already
+    floats on the Argonian)."""
+    if kind != "human":
+        return float(BACK_EXTRA[kind])
+    raw = cfg.get("string_back_swell", BACK_EXTRA["human"])
+    try:
+        s = float(raw)
+    except (TypeError, ValueError):
+        raise ValueError(f"string_back_swell {raw!r} must be a number from 0 to {MAX_BACK_SWELL}") from None
+    if not np.isfinite(s) or not 0.0 <= s <= MAX_BACK_SWELL:
+        raise ValueError(f"string_back_swell {s} must be from 0 (a level ring) to {MAX_BACK_SWELL} "
+                         "(1.5 already rides over thick dreads as a stiff hoop)")
+    return s
 
 
 def slab_points(v, t, z_lo: float, z_hi: float, y_max: float = np.inf) -> np.ndarray:

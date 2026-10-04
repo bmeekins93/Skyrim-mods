@@ -16,8 +16,15 @@ matches the NIF in `dist/`). This is not an in-game screenshot.*
 |---|---|
 | ![Beast mask on the vanilla Argonian head](docs/renders/render_beast_m.png) | ![The three silhouette modes](docs/renders/silhouette_modes.png) |
 
-More previews: `docs/renders/textures_atlas.png` (the texture atlas), `fit_mask_*.png` (fit on each
-head), `render_vanilla_helmet.png` (a vanilla helmet rendered the same way, as a reference).
+More previews: `docs/renders/render_human_m_hair.png` (with the Orc dreadlock hair
+`maleorchair27.nif`, a PyNifly test asset, as a dark overlay: at the default `string_back_swell`
+these thick dreads hide the twine across the whole back, it shows only at the sides),
+`render_human_m_pose.png` (head turned and tilted), `render_human_m_checker.png` (UV checker),
+`render_beast_m_khajiit.png` (beast mask on the vanilla Khajiit head), `textures_atlas.png` (the
+texture atlas), `fit_mask_*.png` (fit on each head), `render_vanilla_helmet.png` (a
+vanilla-style skinned helmet from a mod, PyNifly's test asset `helmet-SMP.nif`, rendered the same
+way as a reference). There is no vanilla human female head offline, so the female mask is only
+checked on the male head scaled to 0.96 (`fit_mask_human_f.png`).
 
 > **Status.** The package is built and checked offline (meshes, textures, plugin, SPID lines,
 > zip; see "How it is checked" below). It has **not yet been tried in the game**: there is no
@@ -34,6 +41,9 @@ head), `render_vanilla_helmet.png` (a vanilla helmet rendered the same way, as a
   reads `CardboardFaceMask_DISTR.ini` and puts one mask into the inventory of every NPC that has the
   `ActorTypeNPC` keyword and is not a child:
   `Item = 0x800~CardboardFaceMask.esp|ActorTypeNPC|NONE|NONE|-C|1|100`.
+  Player-home mannequins match too (their race, ManakinRace, has `ActorTypeNPC`), so they get a
+  mask that is probably invisible on them (no armature lists that race); the ini has a commented
+  example pair that excludes them.
   **SPID does not make anyone wear it**: it only adds items to inventories (its item-equipping code
   was removed in 2024), and users report that NPCs leave such armor in the inventory unworn.
 * So the same ini also gives the same NPCs a keyword:
@@ -41,17 +51,25 @@ head), `render_vanilla_helmet.png` (a vanilla helmet rendered the same way, as a
   SPID creates the keyword itself (no plugin defines it). On its own it does nothing;
   [KEF - Keyword Equip Framework](https://www.nexusmods.com/skyrimspecialedition/mods/185273), a
   small SKSE plugin you install separately, reads `KEFEquip_0x800_CardboardFaceMask_esp` and makes
-  the NPC equip item `0x800` of `CardboardFaceMask.esp`, i.e. the mask, in slot 55. KEF's page
-  indicates that KEF adds the item itself, so with KEF an NPC will probably carry **two** masks,
-  one of them worn (harmless; the `Item` line is kept in case KEF only equips). Without KEF, NPCs
-  are expected to just carry the mask (users report this for SPID items; docs/TESTING.md 3b.1
-  checks it). None of this has been tried in game yet; how SPID handles both lines is checked
-  against SPID's source, KEF only against its Nexus page ([docs/SPID_NOTES.md](docs/SPID_NOTES.md)
-  sections 9 and 13, which list what is verified).
+  the NPC equip item `0x800` of `CardboardFaceMask.esp`, i.e. the mask, in slot 55. Per KEF's
+  source it equips the copy SPID's `Item` line added and only adds one itself when the NPC has
+  none, so each NPC carries **one** mask, worn. Without KEF, NPCs are expected to just carry the
+  mask (users report this for SPID items; docs/TESTING.md 3b.1 checks it). None of this has been
+  tried in game yet; both SPID and KEF were checked against their source code
+  ([docs/SPID_NOTES.md](docs/SPID_NOTES.md) sections 9 and 13, which list what is verified).
+* Known KEF limits (from its source): KEF looks at each NPC **once per game session**. After you
+  load a save without quitting the game (for example after dying), NPCs you already met in that
+  session may carry the mask without wearing it until you quit to desktop and restart the game;
+  leaving the cell does not help. NPCs that are already dead when first loaded (corpses placed
+  in dungeons) carry a mask in their loot but do not wear it. NPCs killed after being masked should
+  keep wearing it.
 * `equip_method: engine` in `config.yaml` drops the keyword line (for players who do not want KEF;
   then NPCs probably only carry the mask).
 * The player never gets one automatically (SPID skips the player); try it on with the console.
 * The meshes are rigidly skinned to the head bone (`NPC Head [Head]`), so the mask follows the head.
+* There is **no ground/inventory model** yet (no world model in the plugin): the mask's inventory
+  preview is empty and a dropped mask is invisible. Do not drop it; remove it with
+  `player.removeitem FExxx800 1` instead.
 
 ## Requirements
 
@@ -66,23 +84,27 @@ head), `render_vanilla_helmet.png` (a vanilla helmet rendered the same way, as a
 powerofthree's Tweaks is **not** needed (the ini uses a FormID, not an EditorID). Why SPID 7.3.3
 loads on 1.7.104, with source citations: [docs/SPID_NOTES.md](docs/SPID_NOTES.md) section 11.
 
-**What is known about KEF.** Its source code could not be found and its Nexus page could not be
-opened from the build machine, so everything about KEF comes from search-engine extracts of that
-page: the keyword format `KEFEquip_0x[FORMID]_[MODNAME]_[EXTENSION]`, the example
-`KEFEquip_0x800_MyCoolAmulet_esp` (the same shape as ours: ID `0x800` in an `.esp`), "compatible
-with all Skyrim versions (SE, AE, VR)", and a last update of its CommonLibSSE-NG "for new skyrim
-update". The same page says that if the NPC already wears another item in that slot, "the item
-is NOT added to the NPC's inventory and is not equipped", unless the keyword ends in
-`_forceEquip_true` (then KEF unequips the other item); its second example names a plugin with an
-`_` (`Kad_AkaviriHats.esp`). That wording implies KEF normally adds the item itself. **Not
-verified:** that the current KEF file loads on 1.7.104 (check `skse64.log`), and that KEF adds the
-item. The ini therefore keeps both lines, and with KEF an NPC will probably carry a second mask,
-which is harmless. Details: [docs/SPID_NOTES.md](docs/SPID_NOTES.md) section 13.
+**What is known about KEF.** Its source is public:
+[Teijirr/SkyrimKEFKeywordEquipFramework](https://github.com/Teijirr/SkyrimKEFKeywordEquipFramework)
+(read at commit `0fb5244`, 2026-08-30; project name `KeywordEquipFramework`, GPL-3.0). Its commit
+history matches the changelog on KEF's Nexus page, so the Nexus DLL is assumed to be built from
+it. From `src/main.cpp`: KEF hooks the NPC's 3D load, reads the keyword's text after `KEFEquip_`,
+takes the FormID before the first `_` and the plugin name between the first and last `_` (so
+`KEFEquip_0x800_CardboardFaceMask_esp` means item `0x800` in `CardboardFaceMask.esp`; underscores
+inside plugin names work) and looks it up as a local FormID in that plugin, which is correct for
+an ESL-flagged plugin. If the NPC already wears another item in slot 55 it neither adds nor
+equips the mask (unless the keyword ends in `_forceEquip_true`); otherwise it adds a copy only
+when the NPC has none, then equips it with the "prevent removal" flag. It skips dead NPCs and
+handles each NPC once per game session. Its build settings let SKSE load it on 1.7.104 when the
+Address Library for 1.7.104 is installed. **Not verified in game:** everything above (nothing was
+run here), and that the KEF file you download is that build: check `skse64.log` (step 1 below).
+Details with line numbers: [docs/SPID_NOTES.md](docs/SPID_NOTES.md) section 13.
 
 ## Install
 
 The build output is `dist/CardboardFaceMask.zip` (zip root = contents of the `Data` folder) and the
-same files unpacked in `dist/CardboardFaceMask/`:
+same files unpacked in `dist/CardboardFaceMask/`; both are committed to the repository, so a
+`git clone` has them:
 
 ```
 CardboardFaceMask.esp
@@ -91,8 +113,27 @@ meshes/CardboardFaceMask/mask_human_m.nif, mask_human_f.nif, mask_beast_m.nif, m
 textures/CardboardFaceMask/mask_d.dds, mask_n.dds, twine_d.dds, twine_n.dds
 ```
 
-Install SKSE, Address Library, SPID and KEF first (each from its Nexus page; with MO2 or Vortex
-like any other mod), then one of:
+Do **not** give GitHub's green *Code -> Download ZIP* file to a mod manager: it wraps the whole
+repository in a `Skyrim-mods-<branch>/` folder. Use `dist/CardboardFaceMask.zip` from a clone (or
+download that one file from the repository page). If you ever have only the folder (an older
+clone), zip its *contents*, not the folder: macOS/Linux
+`cd dist/CardboardFaceMask && zip -r -X ../CardboardFaceMask.zip CardboardFaceMask.esp CardboardFaceMask_DISTR.ini meshes textures`
+(Terminal, not Finder's *Compress*, which adds a wrapper folder and `__MACOSX` entries); Windows:
+open the folder, select everything inside, *Send to -> Compressed (zipped) folder*.
+
+Install the requirements first:
+
+* **SKSE** is not a normal mod. Copy `skse64_loader.exe` and `skse64_1_7_104.dll` from the SKSE
+  archive into the **game folder**, the one that contains `SkyrimSE.exe` (Windows
+  `C:\Program Files (x86)\Steam\steamapps\common\Skyrim Special Edition\`; CrossOver
+  `~/Library/Application Support/CrossOver/Bottles/<Bottle>/drive_c/Program Files (x86)/Steam/steamapps/common/Skyrim Special Edition/`),
+  and the archive's `Data\Scripts` folder into `Data\Scripts`. SKSE's own readme: "Do not copy
+  these files to the Data folder as with a normal mod". Do not install the loader as an MO2 mod;
+  start the game with `skse64_loader.exe` (MO2: add it as an executable).
+* **Address Library, SPID and KEF** are normal mods: install them with MO2/Vortex, or copy their
+  `SKSE/Plugins` contents into `Data\SKSE\Plugins`.
+
+Then install this mod, one of:
 
 * **Mod Organizer 2**: *Install a new mod from an archive* -> pick `CardboardFaceMask.zip` -> OK.
   Tick the mod in the left pane and make sure `CardboardFaceMask.esp` is ticked in the right pane
@@ -110,6 +151,10 @@ like any other mod), then one of:
   * Mac with CrossOver:
     `~/Library/Application Support/CrossOver/Bottles/<Bottle>/drive_c/Program Files (x86)/Steam/steamapps/common/Skyrim Special Edition/Data`
     (in Finder: *Go -> Go to Folder...*, paste the path with your bottle name).
+    **If Finder says `meshes` or `textures` already exists, do not click *Replace*:** that deletes
+    the whole existing folder, including other mods' files. Drag again with the **Option** key held
+    and choose *Merge*, or copy with Terminal, which always merges:
+    `ditto dist/CardboardFaceMask "$HOME/Library/Application Support/CrossOver/Bottles/<Bottle>/drive_c/Program Files (x86)/Steam/steamapps/common/Skyrim Special Edition/Data"`
 
 The plugin is ESL-flagged, so it does not use one of the 254 regular plugin slots.
 
@@ -131,8 +176,9 @@ outline does not match `config.yaml`, and so does the package stage). Options:
 | `size_factor` | 1.08 | photo chin-to-crown height relative to the NPC's |
 | `scale_human`, `scale_female`, `scale_beast` | 1.0, 0.96, 1.25 | per-mesh scale (female is applied on top of human) |
 | `edge_wobble_units` | 0.04 | hand-cut jitter of the outline; 0 = clean die-cut |
-| `string_radius_units`, `string_sag`, `string_asymmetry` | 0.06, 0.6, 0.35 | twine thickness, droop at the back, lopsidedness |
-| `string_clearance_units` | 1.0 | how far the twine rides above the bald scalp at the back of the head, i.e. over typical hair (0.15 = tight to the skull, hidden under hair) |
+| `string_radius_units`, `string_sag`, `string_asymmetry` | 0.06, 0.6, 0.35 | twine thickness, droop at the back (0..1), lopsidedness (0..1) |
+| `string_clearance_units` | 1.0 | how far the twine rides above the bald scalp at the sides and over the ears (more toward the back, see `string_back_swell`); 0.15 (the minimum) = tight to the skull, hidden under hair; at most 2.5. Meant to clear hair up to about 0.8 units thick, an assumed thickness: no vanilla human hair mesh was available to measure, and the one hair checked (Orc dreads) hides most of the string where it crosses them |
+| `string_back_swell` | 0.75 | human mask: toward the back of the head, where hair hangs thickest, the twine rides `string_clearance_units` x (1 + this) above the scalp. 0 = a level ring; 1.5 rides over thick dreads and manes but stands off a bald head like a stiff hoop; 0 to 2 accepted (0-1.5 rendered and tested). The Khajiit/Argonian mesh ignores it |
 | `tape_strip` | true | masking-tape strips on the back |
 | `texture_size`, `twine_texture_size` | 2048, 512 | texture resolution (powers of two) |
 | `plugin_name` | `CardboardFaceMask.esp` | plugin file name (the ini follows it) |
@@ -156,9 +202,15 @@ keyword; two separate chance rolls would mostly pick different NPCs).
 Full plan with expected results: [docs/TESTING.md](docs/TESTING.md). Open the console with the `~` key.
 
 1. `skse64.log` (`Documents\My Games\Skyrim Special Edition\SKSE\`, inside the bottle's
-   `drive_c/users/<user>/Documents/` under CrossOver) lists the SPID and KEF DLLs as loaded, not
-   disabled. KEF's DLL name is not documented here: note the `.dll` file name in the KEF download's
-   `SKSE/Plugins` folder and look for that name in the log.
+   `drive_c/users/<user>/Documents/` under CrossOver) has a line `plugin <dll> (...) loaded
+   correctly` for SPID (`po3_SpellPerkItemDistributor.dll`) and for KEF (probably
+   `KeywordEquipFramework.dll`, its build name; check the `.dll` name in the KEF download's
+   `SKSE/Plugins` folder). Any other text on a plugin's line is a failure, e.g.
+   `disabled, address library needs to be updated`, `must be recompiled for new address library`
+   or `disabled, incompatible with current version of the game`. KEF's own log
+   (`KeywordEquipFramework.log`, same folder, expected from its build settings) should show
+   `SUCCESS - Item Cardboard Face Mask equipped on actor <name>` lines and no
+   `Failed to resolve form [800] from plugin CardboardFaceMask.esp`.
 2. SPID log (`po3_SpellPerkItemDistributor.log`, same folder) lists `CardboardFaceMask_DISTR.ini`,
    has no `Failed to parse entry` or `FAIL` line mentioning `CardboardFaceMask`, and says
    `Registered x/y Items` and `Registered x/y Keywords` with x = y (1/1 if no other mod distributes
@@ -170,7 +222,7 @@ Full plan with expected results: [docs/TESTING.md](docs/TESTING.md). Open the co
 4. Try it on: `player.additem FExxx800 1`, then `player.equipitem FExxx800` (use your ID). Check it in
    third person: photo the right way round, cardboard back, twine, follows the head.
 5. Walk into a town: adult NPCs wear masks, children do not. Click an NPC in the console, then
-   `inv` lists its inventory (the mask should be there, probably twice with KEF). To tell "worn"
+   `inv` lists its inventory (the mask should be there once). To tell "worn"
    from "carried" without looking you can try `getequipped FExxx800` (not verified: GetEquipped is
    a condition function, CK wiki `[ActorID.]GetEquipped ObjectID`, 1 when equipped, and many
    condition functions also work in the console; expect `1.00` when worn, `0.00` when only
@@ -182,18 +234,22 @@ Full plan with expected results: [docs/TESTING.md](docs/TESTING.md). Open the co
 
 | Symptom | Likely cause | What to do |
 |---|---|---|
-| Nobody has a mask (`inv`); the SPID log does not exist | SPID not loaded | Start the game with `skse64_loader.exe`. Check `skse64.log` (same SKSE log folder) for SPID; "address library needs to be updated" means the Address Library for 1.7.104 is missing. |
+| Nobody has a mask (`inv`); the SPID log does not exist | SPID not loaded (or SKSE not running) | Start the game with `skse64_loader.exe`, installed in the game folder next to `SkyrimSE.exe` (see Install; no `skse64.log` at all means SKSE did not run). Check `skse64.log` for SPID's line: "address library needs to be updated" means the Address Library for 1.7.104 is missing. |
+| At start-up a "SKSE Plugin Loader" box says "A DLL plugin has failed to load correctly", or a box titled with a DLL name says "Unsupported address library format" | that DLL is too old for 1.7.104 (SKSE 2.3.1 lists each failed DLL and the reason; the second box comes from an old CommonLibSSE-NG and closes the game) | Note the DLL name, update that mod; for KEF with no update, rebuild with `equip_method: engine` and remove KEF (NPCs then only carry the mask). |
 | SPID log does not list `CardboardFaceMask_DISTR.ini` | ini in the wrong place or renamed | It must be directly in `Data`, named `*_DISTR.ini`. |
 | Log has `FAIL - formID doesn't exist` for `CardboardFaceMask.esp` (and `Registered x/y Items` with x < y) | plugin not active, or renamed | Enable `CardboardFaceMask.esp`; the name in the ini must match the plugin file. |
-| Log has `Failed to parse entry [Item = ...]` or `[Keyword = ...]`; that type has no `Registered ...` line | the ini line was edited into a form SPID cannot read (e.g. an extra `\|` section, a bad count or chance). SPID shows no message in game for this | Compare the line with the commented examples in the ini, or reinstall the ini from the zip. |
+| Log has `Failed to parse entry [Item = ...]` or `[Keyword = ...]`; that type has no `Registered ...` line | the ini line was edited into a form SPID cannot read (e.g. an extra `\|` section, a bad count or chance). SPID shows no message in game for this | Compare the line with the commented examples in the ini, or reinstall `dist/CardboardFaceMask/CardboardFaceMask_DISTR.ini`. |
 | NPCs have the mask in `inv` but nobody wears it | KEF not installed, not loaded (look for its DLL name in `skse64.log`: missing, or disabled because its Address Library/runtime does not match 1.7.104), or `equip_method: engine` | Install or update KEF; make sure the ini has the `Keyword = KEFEquip_0x800_CardboardFaceMask_esp\|...` line (rebuild with `equip_method: kef`). |
-| A few NPCs carry one mask but do not wear it, and they wear another item (e.g. another mod's accessory) that uses slot 55 | KEF's page says KEF skips an NPC whose slot is already taken: it neither adds nor equips its item (not verified) | Accept it, or force the mask on: in the installed ini append `_forceEquip_true` to the keyword name, i.e. `Keyword = KEFEquip_0x800_CardboardFaceMask_esp_forceEquip_true\|...` (at a chance below 100 % also in the `Item` line's filter). KEF then unequips the other item. |
-| Most NPCs wear it, a few only carry it (nothing else in slot 55) | not known yet: KEF reportedly equips when an NPC's 3D loads, and SPID may distribute after that for some NPCs (unverified), or the game swapped the mask out | Leave the cell and come back; select the NPC and `equipitem FExxx800` to confirm the mesh works; keep `non_playable: false`. Report what you see. |
-| Two masks in an NPC's `inv`, one worn | expected with KEF: KEF's page indicates that it adds the item itself, on top of SPID's `Item` line | Harmless. To keep one, you can comment out the `Item =` line in the installed ini (only if KEF really adds the mask: check that NPCs still wear one afterwards, docs/TESTING.md 3b.2). |
-| The mask count in an NPC's `inv` grows (3, 4, ...) after reloads or cell changes | KEF adding a copy on every 3D load (not known; KEF's page does not say) | Report it with the KEF version. Commenting out the `Item =` line removes SPID's copy only; `equip_method: engine` (or removing KEF) stops it. |
+| A few NPCs carry one mask but do not wear it, and they wear another item (e.g. another mod's accessory) that uses slot 55 | KEF skips an NPC whose slot is already taken: it neither adds nor equips its item (KEF `src/main.cpp:178-188`) | Accept it, or force the mask on: in the installed ini append `_forceEquip_true` to the keyword name, i.e. `Keyword = KEFEquip_0x800_CardboardFaceMask_esp_forceEquip_true\|...` (at a chance below 100 % also in the `Item` line's filter). KEF then unequips the other item. |
+| After loading a save (e.g. after dying) without quitting the game, NPCs you already met carry the mask but do not wear it | KEF handles each NPC once per game session and never resets that list (KEF `src/main.cpp:41-48, 216`) | **Quit to desktop and restart the game**, then load the save. Leaving the cell and coming back does not help. |
+| Corpses found already dead have a mask in their loot but did not wear it | KEF skips dead NPCs (KEF `src/main.cpp:46`); SPID still gives them the item | Expected. |
+| Most NPCs wear it, a few only carry it (nothing else in slot 55, no reload this session) | not known yet: the game may have swapped the mask out, or the NPC loaded before SPID gave it the keyword | Restart the game (see the row above); select the NPC and `equipitem FExxx800` to confirm the mesh works; keep `non_playable: false`. Report which NPCs. |
+| Two or more masks in an NPC's `inv` | not expected: KEF adds a copy only when the NPC has none (KEF `src/main.cpp:194-199`), so one mask is normal | Report it with the KEF version and how it happened (reloads, cell changes). |
 | Masks on NPCs that should not have one, or mask carried by NPCs without the keyword | the `Item` and `Keyword` lines were edited differently | Make the same change in both lines (see the ini's examples). |
 | Different NPCs have masks after each restart | `chance_percent` below 100 without the `!` suffix | Use e.g. `25!` (the generated ini already does). |
-| Mask stays invisible on NPCs of one race, even after selecting one and typing `equipitem FExxx800` | race not covered by the armatures (often a modded race) | Note the NPC's race; it has to be added to the plugin's race list and the plugin rebuilt. |
+| Mask stays invisible on NPCs of one race, even after selecting one and typing `equipitem FExxx800` | race not covered by the armatures (often a modded or DLC race). The plugin's race list (`src/plugin/Generator/Vanilla.cs`) can only name `Skyrim.esm` races, because the plugin's only master is `Skyrim.esm` | For a modded or DLC race, set that race's *Armor Race* (RACE record, in xEdit) to `NordRace` (or `KhajiitRace`/`ArgonianRace` for beast-like races): the game then uses this plugin's matching armature (CommonLibSSE-NG `TESObjectARMA.cpp:13-46` follows the armor race). |
+| Player-home mannequins have a mask in their inventory | mannequins (ManakinRace) carry the `ActorTypeNPC` keyword, so both ini lines select them | Harmless. To exclude them, use the commented "no player-home mannequins" pair in the installed ini (FormID `0x10760A` in `Skyrim.esm`). |
+| Empty inventory preview; a dropped mask is invisible | the plugin has no ground/world model yet | Do not drop it; `player.removeitem FExxx800 1` removes it. |
 | Purple mask | textures not found | Check `textures/CardboardFaceMask/*.dds` were installed next to the meshes (MO2: no conflicting mod hides them). |
 | Mask floats too far forward or cuts into the face | head shape differs from vanilla (head-mesh or RaceMenu sliders), or beast scale | Adjust `forward_offset_units`, `size_factor`, `scale_*` and rebuild. |
 | Mask does not turn with the head | skinning problem | Please report; every vertex is meant to follow `NPC Head [Head]`. |
@@ -228,10 +284,22 @@ tools/setup.sh                       # .venv, Python packages, NiflyDLL, Blender
 .venv/bin/python src/build_all.py    # all stages + tests
 ```
 
-Needs git, cmake, a C++20 compiler, curl, Python 3.10-3.13 (3.11 recommended) and the
-[.NET 10 SDK](https://dotnet.microsoft.com/download) (plugin generator and Spriggit).
+Needs git, cmake, a C++20 compiler, curl, Python 3.11-3.13 (3.11 recommended; numpy 2.4.6 and
+scipy 1.17.1 need 3.11 or newer) with its `venv` module (Debian/Ubuntu: `sudo apt install
+python3.11-venv`, matching your Python) and the
+[.NET 10 SDK](https://dotnet.microsoft.com/download) (plugin generator and Spriggit). Headless
+Blender needs a few X11/GL libraries that minimal systems (WSL2, containers) may lack; on
+Debian/Ubuntu: `sudo apt install libgl1 libx11-6 libxext6 libxrender1 libxxf86vm1 libxfixes3
+libxi6 libxkbcommon0 libsm6 libice6`.
 `tools/setup.sh --no-ml` skips PyTorch when you already have `work/outline.json` and
 `work/matte.png` (then build with `build_all.py --skip-ml`).
+
+First run, measured on a 4-vCPU Linux VM with a fast connection: `tools/setup.sh` about 2.5 min,
+`build_all.py` about 7 min (the segment stage downloads 1.2 GB of models, the tests take 2.5 min).
+Disk: about 1.6 GB `.venv`, 1.3 GB Blender, 1.2 GB Hugging Face models, 0.7 GB pip/NuGet caches.
+The build also rewrites tracked files (`docs/renders/` silhouette, texture and fit images,
+`src/plugin/yaml/`, and `dist/`); on the same machine they come out byte-identical, on another
+CPU tiny float differences may show up as git changes.
 
 ### macOS
 
@@ -260,8 +328,8 @@ install Python 3.11, the .NET 10 SDK, git and Blender 4.2 LTS, then
 py -3.11 -m venv .venv
 .venv\Scripts\pip install -r requirements.txt -r requirements-ml.txt
 .venv\Scripts\python tools\nifly\build_niflydll.py --fetch-only
-rem put PyNifly's official NiflyDLL.dll (from the PyNifly release matching PYNIFLY_SHA in
-rem tools\nifly\build_niflydll.py) into third_party\PyNifly\io_scene_nifly\
+rem put PyNifly's official NiflyDLL.dll from the PyNifly V29.0.0 release (the tag of
+rem PYNIFLY_SHA in tools\nifly\build_niflydll.py) into third_party\PyNifly\io_scene_nifly\
 rem only for preview renders; adjust to where Blender is installed:
 set BLENDER=C:\Program Files\Blender Foundation\Blender 4.2\blender.exe
 .venv\Scripts\python src\build_all.py
@@ -287,9 +355,16 @@ select parts. File formats between stages: [docs/CONTRACTS.md](docs/CONTRACTS.md
 
 `.claude/settings.json` registers a PreToolUse hook (`.claude/hooks/block_game_data.sh`, which runs
 `block_game_data.py`) that stops Claude Code from writing into, or deleting from, a Skyrim `Data`
-folder. It needs `bash` and Python 3 (`python3`, `python` or `py -3`) on PATH. Without Python it
-deliberately blocks every tool call, with a message saying why, instead of silently letting writes
-through. It cannot see paths hidden in shell variables.
+folder. It needs `bash` and Python 3 (`python3`, `python` or `py -3`) on PATH; on Windows that
+means Git Bash (without it Claude Code runs hooks in PowerShell, where this launcher cannot start
+and the hook does nothing). Without Python it deliberately blocks every tool call, with a message
+saying why, instead of silently letting writes through. It follows symlinks (a short link to the
+CrossOver bottle's `Data` counts as `Data`) but cannot see paths hidden in shell variables.
+**Windows limit:** the matcher lists `Write|Edit|MultiEdit|NotebookEdit|Bash`, so Claude Code's
+PowerShell tool (on by default on Windows) is not checked yet. `block_game_data.py` already handles
+PowerShell commands (tested); to use it, change the matcher to
+`Write|Edit|MultiEdit|NotebookEdit|Bash|PowerShell` (a settings change left to the repository
+owner).
 
 ### How it is checked
 
@@ -303,15 +378,19 @@ in any of the nine texture slots of every NIF and every model path in the ESP mu
 package with exact case; no stray or unreferenced files; the SPID `Item` line must point at the
 shipped plugin's ARMO, the `Keyword` line must name the KEF keyword for that ARMO, both must select
 the same NPCs and come through SPID's input clean-up unchanged; and the zip must match the folder
-byte for byte. The package is assembled in a staging folder and only replaces `dist/` when all of
-this passes. `.venv/bin/python src/07_package.py --check-only` re-validates an existing `dist/`.
+byte for byte. The NIF stage reads every NIF back (skinning, partition, counts, textures) before
+the package stage may use it. The package is assembled in a staging folder and only replaces
+`dist/` when all of this passes. `.venv/bin/python src/07_package.py --check-only` re-validates an
+existing `dist/` (add `--no-zip` if you only have the folder). `.gitattributes` keeps git from
+converting the ini's line endings on Windows clones.
 The SPID lines were derived from SPID's source code: [docs/SPID_NOTES.md](docs/SPID_NOTES.md).
 
 ## Credits and licenses
 
 | Component | Used for | License |
 |---|---|---|
-| [PyNifly](https://github.com/BadDogSkyrim/PyNifly) by BadDogSkyrim | NIF writing (`pyn` layer), reference NIFs and skeletons | GPL-3.0 (`third_party/PyNifly/LICENSE`) |
+| [PyNifly](https://github.com/BadDogSkyrim/PyNifly) by BadDogSkyrim | NIF writing (`pyn` layer), NiflyDLL source, skeletons shipped with the add-on | GPL-3.0 (`third_party/PyNifly/LICENSE`) |
+| Reference meshes from PyNifly's `tests/` folder (malehead, maleheadargonian, maleheadkhajiit, maleorchair27, the lich hood; `helmet-SMP.nif` and `CitrusFemHead.nif` are third-party mod assets) | offline fit/clearance references and renders only | Bethesda game data (or the mod authors'), not covered by PyNifly's GPL; fetched into `third_party/` by `tools/setup.sh`, not stored in this repository and not shipped in the package |
 | [nifly](https://github.com/ousnius/nifly) by ousnius | NIF library behind PyNifly | GPL-3.0 (`third_party/nifly/LICENSE`) |
 | [Mutagen](https://github.com/Mutagen-Modding/Mutagen) (Mutagen.Bethesda.Skyrim 0.54.4) | generating the ESP | GPL-3.0-only (NuGet metadata) |
 | [Mutagen.Bethesda.FormKeys](https://github.com/Noggog/Mutagen.Bethesda.FormKeys) (SkyrimSE 3.4.0) | vanilla FormIDs | GPL-3.0-only (NuGet metadata) |
@@ -321,7 +400,7 @@ The SPID lines were derived from SPID's source code: [docs/SPID_NOTES.md](docs/S
 | [ZhengPeng7/BiRefNet-matting](https://huggingface.co/ZhengPeng7/BiRefNet-matting) @ `eccde0a` | foreground matte | MIT (Hugging Face model metadata) |
 | [Blender](https://www.blender.org/) 4.2.14 LTS | offline preview renders only | GPL-2.0-or-later |
 | [SPID](https://github.com/powerof3/Spell-Perk-Item-Distributor) by powerofthree | runtime distribution (installed separately, not included) | MIT |
-| [KEF - Keyword Equip Framework](https://www.nexusmods.com/skyrimspecialedition/mods/185273) by ziman62 | makes NPCs wear the mask at runtime (installed separately, not included) | see its Nexus page |
+| [KEF - Keyword Equip Framework](https://www.nexusmods.com/skyrimspecialedition/mods/185273) by ziman62 ([source](https://github.com/Teijirr/SkyrimKEFKeywordEquipFramework)) | makes NPCs wear the mask at runtime (installed separately, not included) | GPL-3.0 (its `LICENSE`) |
 
 The build tools above are not shipped in the mod package; the package contains only files this
 project generated. Python packages are listed with versions in `requirements*.txt` and keep their

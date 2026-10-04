@@ -75,8 +75,13 @@ WEIGHT_TOL = 1e-3        # half-float weights of vanilla meshes sum to 1 within 
 HEADS = {
     "human": (VANILLA / "malehead.nif", SKELETONS / "skeleton.nif", (0.62, 0.36, 0.25)),
     "beast": (VANILLA / "maleheadargonian.nif", SKELETONS / "skeletonbeast.nif", (0.28, 0.33, 0.20)),
-    # Non-vanilla test head shipped with PyNifly (CitrusFemHead), handy for the _f masks.
-    "female": (VANILLA / "CitrusFemHead.nif", SKELETONS / "skeleton_female.nif", (0.62, 0.38, 0.28)),
+    # vanilla Khajiit male head (the other race the beast mask must fit; sha-pinned in cfm.fit)
+    "khajiit": (VANILLA / "meshes" / "actors" / "character" / "character assets" / "maleheadkhajiit.nif",
+                SKELETONS / "skeletonbeast.nif", (0.55, 0.42, 0.28)),
+    # NOT a human female head: PyNifly's custom CitrusFemHead.nif has Khajiit-derived topology and
+    # cheetahfemale textures (docs/NIF_NOTES.md), so it goes with the beast female skeleton and the
+    # beast_f mask. No vanilla human female head is available offline.
+    "khajiit_female": (VANILLA / "CitrusFemHead.nif", SKELETONS / "skeletonbeast_female.nif", (0.55, 0.42, 0.28)),
 }
 
 SKELETON_FILES = {
@@ -932,7 +937,7 @@ def parse_args(argv):
     ap.add_argument("--extra-nif", action="append", default=[],
                     help="overlay NIF (e.g. a hair or hood), drawn matte dark brown and posed with the "
                          "head; not part of the checks (repeatable)")
-    ap.add_argument("--head", choices=["human", "beast", "female", "none"], default="human")
+    ap.add_argument("--head", choices=[*HEADS, "none"], default="human")
     ap.add_argument("--skeleton", choices=["auto", *SKELETON_FILES], default="auto",
                     help="reference skeleton for the --nif files (auto: from the file name)")
     ap.add_argument("--pose", default="0,0,0", help="head bone yaw,pitch,roll in degrees")

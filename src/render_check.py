@@ -338,9 +338,13 @@ def parse_args(argv=None):
     ap.add_argument("--extra-nif", action="append", default=[],
                     help="overlay NIF such as a hair or hood: drawn matte dark brown and posed with the "
                          "head, but not checked (repeatable)")
-    ap.add_argument("--head", choices=["human", "beast", "female", "none"], default="human",
-                    help="head overlay: vanilla malehead.nif / maleheadargonian.nif, "
-                         "PyNifly's CitrusFemHead.nif test head, or none")
+    ap.add_argument("--head", choices=["human", "beast", "khajiit", "khajiit_female", "none"],
+                    default="human",
+                    help="head overlay: vanilla malehead.nif (human), maleheadargonian.nif (beast), "
+                         "maleheadkhajiit.nif (khajiit), PyNifly's custom CitrusFemHead.nif "
+                         "(khajiit_female: a cheetah-style Khajiit head, NOT a human female head; "
+                         "use it with the beast_f mask), or none. No vanilla human female head is "
+                         "available offline: check human_f on --head human")
     ap.add_argument("--out", required=True, help="contact sheet PNG")
     ap.add_argument("--pose", default="0,0,0",
                     help="head bone yaw,pitch,roll in degrees (+yaw: face turns to the actor's "

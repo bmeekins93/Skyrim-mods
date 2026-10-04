@@ -215,9 +215,12 @@ def test_ini_header_explains_kef():
     assert pkg.KEF_URL in header and "Keyword Equip Framework" in header
     assert "never equips" in header and "does nothing by itself" in header
     assert "Without KEF the keyword is harmless" in header
-    # what KEF's page says about adding the item and occupied slots, and the force suffix
-    assert "TWO" in header and "slot (55)" in header
-    assert KEYWORD + pkg.KEF_FORCE_SUFFIX in header and "not tested here" in header
+    # what KEF's source says: it equips SPID's copy (one mask), skips occupied slots, the force
+    # suffix, once per session, dead NPCs skipped
+    assert "ONE mask" in header and "TWO" not in header and "slot (55)" in header
+    assert pkg.KEF_SOURCE in header and "not tested in game here" in header
+    assert KEYWORD + pkg.KEF_FORCE_SUFFIX in header
+    assert "once per game session" in header and "already" in header and "dead" in header
 
 
 @pytest.mark.parametrize("method", ["kef", "engine"])
@@ -229,7 +232,8 @@ def test_ini_examples_are_valid_entries(method):
                 if line.startswith(";") and re.match(r";\s+(Item|Keyword) = (0x|KEF)", line)]
     items = [v for k, v in examples if k == "Item"]
     keywords = [v for k, v in examples if k == "Keyword"]
-    assert len(items) == 3 and len(keywords) == (3 if method == "kef" else 0)
+    assert len(items) == 4 and len(keywords) == (4 if method == "kef" else 0)
+    assert sum(pkg.MANNEQUIN in v for v in items) == 1
     for value in items + keywords:
         sections = value.split("|")
         assert len(sections) == 7
@@ -554,6 +558,31 @@ def test_detects_unreferenced_mesh(broken_copy, config):
     _expect_failure(broken_copy, config, "stray mesh")
 
 
+def test_detects_truncated_dds(broken_copy, config):
+    """A DDS cut short (or padded) keeps a sane header; the length the header implies catches it."""
+    dds = broken_copy / "textures" / MOD_NAME / "mask_d.dds"
+    dds.write_bytes(dds.read_bytes()[:1148])
+    _expect_failure(broken_copy, config, "mask_d.dds: 1148 bytes, the header implies")
+
+
+def test_dds_expected_size_matches_shipped_textures(dist_dir):
+    for dds in sorted((dist_dir / "textures" / MOD_NAME).glob("*.dds")):
+        assert pkg.dds_problems(dds) == [], dds.name
+
+
+def test_detects_crlf_ini(broken_copy, config):
+    """A Windows clone with core.autocrlf turns the ini into CRLF; the check says so plainly."""
+    ini = broken_copy / pkg.distr_ini_name(config["plugin_name"])
+    ini.write_bytes(ini.read_bytes().replace(b"\n", b"\r\n"))
+    _expect_failure(broken_copy, config, "Windows (CRLF) line endings")
+
+
+def test_gitattributes_keep_dist_byte_exact():
+    """git must not convert line endings of the shipped files (the ini is text to git)."""
+    lines = (ROOT / ".gitattributes").read_text(encoding="utf-8").splitlines()
+    assert "dist/** -text" in [line.strip() for line in lines]
+
+
 def test_detects_ini_for_other_plugin(broken_copy, config):
     ini = broken_copy / pkg.distr_ini_name(config["plugin_name"])
     ini.write_text(ini.read_text().replace("~CardboardFaceMask.esp|", "~Other.esp|"))
@@ -660,6 +689,55 @@ def test_hook_follows_symlinks(tmp_path):
     link.symlink_to(data)
     proc = run_hook({"tool_name": "Write", "tool_input": {"file_path": str(link / "x.esp")}})
     assert proc.returncode == 2
+
+
+def test_hook_bash_follows_symlinks(tmp_path):
+    """A short link to the long CrossOver bottle path must count as the Data folder it points to,
+    in command words, after `cd link` and as the hook input's cwd."""
+    data = tmp_path / "Skyrim Special Edition" / "Data"
+    data.mkdir(parents=True)
+    (tmp_path / "skydata").symlink_to(data)
+    (tmp_path / "skygame").symlink_to(data.parent)
+    cases = [
+        (f"cp dist/CardboardFaceMask/CardboardFaceMask.esp {tmp_path}/skydata/", str(ROOT), True),
+        (f"cd {tmp_path}/skydata && cp /tmp/x.esp .", str(ROOT), True),
+        ("cp /tmp/x.esp .", str(tmp_path / "skydata"), True),
+        ("cp /tmp/x.esp skydata/", str(tmp_path), True),
+        ("cd skygame && cp /tmp/x.esp Data/", str(tmp_path), True),
+        (f"ls -la {tmp_path}/skydata", str(ROOT), False),
+        ("cat x.ini", str(tmp_path / "skydata"), False),
+        ("cp /tmp/a /tmp/b", str(tmp_path), False),
+    ]
+    for command, cwd, blocked in cases:
+        proc = run_hook({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": cwd})
+        assert proc.returncode == (2 if blocked else 0), (command, cwd, proc.stderr)
+
+
+@pytest.mark.parametrize("command,cwd,blocked", [
+    (f"Copy-Item -Recurse dist\\CardboardFaceMask\\* -Destination '{STEAM}'", None, True),
+    (f"Expand-Archive dist\\CardboardFaceMask.zip -DestinationPath \"{STEAM}\"", None, True),
+    (f"robocopy dist\\CardboardFaceMask \"{STEAM}\" /E", None, True),
+    (f"Get-ChildItem '{STEAM}' | Remove-Item", None, True),
+    (f"Get-ChildItem '{STEAM}' | ForEach-Object {{ Remove-Item $_ }}", None, True),
+    (f"Set-Location '{STEAM}'; New-Item x.txt", None, True),
+    (f"Get-Content a.ini > '{STEAM}\\a.ini'", None, True),
+    (f"Write-Output 'unclosed {STEAM}", None, True),
+    ("New-Item x.txt", STEAM, True),
+    (f"Get-ChildItem '{STEAM}'", None, False),
+    (f"Get-ChildItem '{STEAM}' 2>&1 | Select-Object -First 5", None, False),
+    (f"Test-Path '{STEAM}\\CardboardFaceMask.esp'", None, False),
+    ("Get-Content x.ini", STEAM, False),
+    # coarse on purpose: objects piped from a Data listing cannot be followed
+    (f"Set-Location '{STEAM}'; Set-Location C:\\Temp; New-Item x", None, True),
+    (f"Get-ChildItem '{STEAM}'; Copy-Item a.txt C:\\Temp\\", None, True),
+    ("Copy-Item dist\\CardboardFaceMask.zip C:\\Temp\\", None, False),
+    ("Get-ChildItem | Out-File list.txt", None, False),
+])
+def test_hook_powershell(command, cwd, blocked):
+    """Claude Code's PowerShell tool (default shell on Windows) sends tool_input.command too."""
+    proc = run_hook({"tool_name": "PowerShell", "tool_input": {"command": command},
+                     "cwd": cwd or str(ROOT)})
+    assert proc.returncode == (2 if blocked else 0), (command, proc.stderr)
 
 
 @pytest.mark.parametrize("command,blocked", [

@@ -8,8 +8,8 @@ __pycache__/
 work/
 reference/
 .pytest_cache/
-# The installable folder dist/CardboardFaceMask/ is committed; the zip is a convenience copy.
-dist/*.zip
+# dist/CardboardFaceMask/ and dist/CardboardFaceMask.zip are both committed: the user installs from
+# a clone (MO2/Vortex need the zip) and cannot rebuild it there (work/ is not in git).
 dist/.CardboardFaceMask.staging/
 
 # .NET build output

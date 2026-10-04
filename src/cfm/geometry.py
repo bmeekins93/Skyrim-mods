@@ -24,9 +24,9 @@ from .geom_mesh import closest_points, face_cross, vertex_normals, winding_numbe
 from .geom_sheet import (Bend, points_in_polygon, conforming_triangulation, interior_points,
                          make_boundary)
 from .geom_mesh import ray_hits
-from .geom_twine import (ASYM_SIDE_UNITS, ASYM_UNITS, BACK_EXTRA, CLEARANCE_FACTOR, CROWN_MARGIN, EAR_TOP_GAP,
-                         SAG_DROP_UNITS, SMOOTH_SIGMA, STRING_HEAD_GAP, TEMPLE_FROM_EYE_PIT, ClearanceProfile,
-                         adaptive_resample, contact_heights, ear_gaps, string_path, tape_strip, tube)
+from .geom_twine import (ASYM_SIDE_UNITS, ASYM_UNITS, CLEARANCE_FACTOR, CROWN_MARGIN, EAR_TOP_GAP, SAG_DROP_UNITS,
+                         SMOOTH_SIGMA, STRING_HEAD_GAP, TEMPLE_FROM_EYE_PIT, ClearanceProfile, adaptive_resample,
+                         back_swell, contact_heights, ear_gaps, string_path, tape_strip, tube)
 
 VARIANTS = ("human_m", "human_f", "beast_m", "beast_f")
 SEED = 2117                    # IMG_2117: every random choice derives from this
@@ -34,6 +34,7 @@ BOUNDARY_SPACING = 0.30        # outline sample spacing (units, human_m; scales 
 INTERIOR_SPACING = 0.75        # cap interior point spacing (units, human_m)
 TWINE_SIDES = 6
 TWINE_MAX_SEGMENT = 0.6        # twine ring spacing on straight runs (units)
+MAX_STRING_CLEARANCE = 2.5     # string_clearance_units above this is refused (see build_twine)
 ATTACH_INSET = 1.25            # string end, measured in from the mask edge (units, human_m)
 LIFT_INSET = 0.30              # where the string lifts off the back face, from the edge
 TAPE_LENGTH = 2.2             # tape strip length (units); width = length / 2.8 (atlas tape aspect)
@@ -198,16 +199,22 @@ def build_twine(loop, bend: Bend, layout: dict, cfg: dict, heads, anchor: dict, 
     [(name, verts, tris)] reference hair it rides over as well (STRING_HEAD_GAP off its surface).
 
     The string rides string_clearance_units * CLEARANCE_FACTOR[kind] over the bald head(s) round the
-    sides, swelling by BACK_EXTRA[kind] of that toward the back centre, over the ears where the kind has
-    ears beside the head (anchor["side_ears"]); see cfm.geom_twine."""
+    sides, swelling by back_swell(cfg, kind) of that toward the back centre (config string_back_swell
+    for humans), over the ears where the kind has ears beside the head (anchor["side_ears"]); see
+    cfm.geom_twine."""
     r = float(cfg["string_radius_units"])
     asym = float(cfg["string_asymmetry"])
     sag = float(cfg["string_sag"])
     clear = float(cfg.get("string_clearance_units", STRING_HEAD_GAP))
     if clear < STRING_HEAD_GAP:
         raise ValueError(f"string_clearance_units {clear} < the minimum head gap {STRING_HEAD_GAP}")
+    if not clear <= MAX_STRING_CLEARANCE:
+        # the halo gates in 03_mesh.py scale with this value, so they cannot catch a typo
+        raise ValueError(f"string_clearance_units {clear} > {MAX_STRING_CLEARANCE} (the twine would "
+                         "float as a loose hoop; 1.0 is the default)")
     c_side = max(clear * CLEARANCE_FACTOR[kind], STRING_HEAD_GAP)
-    c_back = c_side * (1.0 + BACK_EXTRA[kind])
+    swell = back_swell(cfg, kind)
+    c_back = c_side * (1.0 + swell)
     attach, h_side = {}, {}
     for side in (+1, -1):
         h_side[side] = h = side * asym * ASYM_UNITS
@@ -259,7 +266,8 @@ def build_twine(loop, bend: Bend, layout: dict, cfg: dict, heads, anchor: dict, 
                               vertex_normals(tv, tt), "tape"))
     info = {"attach_sheet": {("+X" if s > 0 else "-X"): [round(x, 4) for x in a] for s, a in attach.items()},
             "length": round(length, 3), "rings": int(len(path)), "radius": r, "clearance_units": clear,
-            "clearance_side_back": [round(c_side, 4), round(c_back, 4)], "min_head_gap": STRING_HEAD_GAP,
+            "back_swell": swell, "clearance_side_back": [round(c_side, 4), round(c_back, 4)],
+            "min_head_gap": STRING_HEAD_GAP,
             "side_ears": ears, "ear_lift_extra": round(extra, 4),
             "ear_gaps": ({("+X" if s_ > 0 else "-X"): None if g is None else round(g, 4)
                           for s_, g in ear_gaps(path, ears, r).items()} if ears else None),

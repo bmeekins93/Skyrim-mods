@@ -20,6 +20,13 @@ skeletonbeast.nif, skeletonbeast_female.nif).
 
 No ground model is written (ground_model null, see docs/NIF_NOTES.md section 7).
 
+Acceptance (CLAUDE.md rule 4): every written NIF is read back with pyn before the stage reports
+success (verify_nif): game SKYRIMSE, the two shapes with the authored vertex/triangle counts,
+BSTriShape + BSDismemberSkinInstance, the single bone "NPC Head [Head]" weighting every vertex 1.0,
+skin-to-bone = inverse(bind), one partition = config slot, tangents in the vertex format and the
+texture paths. A non-empty NiflyDLL message log also fails the stage. tests/test_nif.py repeats
+these checks independently (raw block reader) after the package stage.
+
 Run from the repo root:  .venv/bin/python src/04_export_nif.py [--mesh-dir D] [--out-dir D] [--manifest P]
   (defaults work/mesh, work/nif and <out-dir>/../nif_manifest.json = work/nif_manifest.json)
 Block dumps (docs/NIF_NOTES.md):  .venv/bin/python src/04_export_nif.py --dump <nif> [<nif> ...]
@@ -35,7 +42,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from cfm.fit import VARIANT_SKELETON  # noqa: E402
-from cfm.geom_xform import HEAD_BONE, NifFile, mat_to_xf, pynifly, skeleton_binds  # noqa: E402
+from cfm.geom_nifinfo import vertex_flags  # noqa: E402
+from cfm.geom_xform import HEAD_BONE, NifFile, mat_to_xf, pynifly, shape_skin, skeleton_binds  # noqa: E402
 from cfm.geometry import MASK_SHAPE, TWINE_SHAPE, VARIANTS, load_npz  # noqa: E402
 from cfm.paths import MOD_NAME, SKELETONS, WORK, load_config  # noqa: E402
 from pyn.nifconstants import ShaderFlags1, ShaderFlags2  # noqa: E402
@@ -105,6 +113,10 @@ def skin_to_head(shape, n_verts: int, n_tris: int, bind: np.ndarray, slot: int) 
     shape.set_partitions([part], [slot] * n_tris)
 
 
+class NifCheckError(RuntimeError):
+    """A written NIF failed the read-back check (verify_nif)."""
+
+
 def _tuples(a, kind=float) -> list:
     """ctypes array assignment in pyn wants tuples, not lists."""
     return [tuple(kind(x) for x in row) for row in np.asarray(a)]
@@ -132,8 +144,50 @@ def export_variant(variant: str, mesh_path: Path, out_path: Path, slot: int) -> 
     log = [m for m in NifFile.message_log().split("\n") if m and not m.startswith("Info: Loaded skeleton")]
     if log:
         print(f"{variant}: NiflyDLL log:\n  " + "\n  ".join(log))
+    problems = verify_nif(out_path, info, bind, slot)
+    problems += [f"NiflyDLL logged: {m}" for m in log]
+    if problems:
+        raise NifCheckError(f"{out_path.name}: " + "; ".join(problems))
     return {"variant": variant, "skeleton": VARIANT_SKELETON[variant], "shapes": info,
             "inputs_are_fixtures": bool(mesh.report.get("inputs_are_fixtures", False)), "log": log}
+
+
+def verify_nif(path: Path, shapes: dict, bind: np.ndarray, slot: int) -> list[str]:
+    """Read a written NIF back with pyn; returns the problems found (empty = OK)."""
+    nif = NifFile(str(path))
+    problems = []
+    if nif.game != "SKYRIMSE":
+        problems.append(f"game {nif.game!r}, expected SKYRIMSE")
+    names = [s.name for s in nif.shapes]
+    if names != list(shapes):
+        return problems + [f"shapes {names}, expected {list(shapes)}"]
+    for s in nif.shapes:
+        want = shapes[s.name]
+        got = {"vertices": len(s.verts), "triangles": len(s.tris)}
+        if got != want:
+            problems.append(f"{s.name}: {got}, authored {want}")
+        if s.blockname != "BSTriShape" or s.skin_instance_name != "BSDismemberSkinInstance":
+            problems.append(f"{s.name}: {s.blockname} / {s.skin_instance_name}, expected "
+                            "BSTriShape / BSDismemberSkinInstance")
+        if s.bone_names != [HEAD_BONE]:
+            problems.append(f"{s.name}: bones {s.bone_names}, expected [{HEAD_BONE!r}]")
+            continue
+        weights = s.bone_weights[HEAD_BONE]
+        if sorted(i for i, _ in weights) != list(range(len(s.verts))) or \
+                not np.allclose([w for _, w in weights], 1.0):
+            problems.append(f"{s.name}: not every vertex is weighted 1.0 to {HEAD_BONE}")
+        if not np.allclose(shape_skin(s)["skin_to_bone"][HEAD_BONE], np.linalg.inv(bind), atol=1e-4):
+            problems.append(f"{s.name}: skin-to-bone transform is not inverse(head bind)")
+        if [part.id for part in s.partitions] != [slot] or set(s.partition_tris) != {0}:
+            problems.append(f"{s.name}: partitions {[part.id for part in s.partitions]}, expected [{slot}]")
+        if "TANGENT" not in vertex_flags(int(s.properties.vertexDesc)):
+            problems.append(f"{s.name}: no tangents in the vertex format")
+        mat = MATERIALS[s.name]
+        for slot_name, key in (("Diffuse", "diffuse"), ("Normal", "normal")):
+            if s.textures.get(slot_name) != texture_path(mat[key]):
+                problems.append(f"{s.name}: {slot_name} texture {s.textures.get(slot_name)!r}, "
+                                f"expected {texture_path(mat[key])!r}")
+    return problems
 
 
 def write_manifest(path: Path) -> dict:
@@ -168,8 +222,12 @@ def main() -> int:
         if not mesh_path.exists():
             print(f"missing {mesh_path}; run src/03_mesh.py first", file=sys.stderr)
             return 1
-        res = export_variant(variant, mesh_path, args.out_dir / NIF_NAMES[variant], slot)
-        print(f"{variant}: {res['shapes']} -> {args.out_dir / NIF_NAMES[variant]}")
+        try:
+            res = export_variant(variant, mesh_path, args.out_dir / NIF_NAMES[variant], slot)
+        except NifCheckError as e:
+            print(f"ERROR: NIF read-back check failed: {e}", file=sys.stderr)
+            return 1
+        print(f"{variant}: {res['shapes']} -> {args.out_dir / NIF_NAMES[variant]} (read-back OK)")
         if res["inputs_are_fixtures"]:
             print(f"WARNING: {variant} was built from SYNTHETIC fixtures - placeholder mesh", file=sys.stderr)
     manifest = write_manifest(manifest_path)

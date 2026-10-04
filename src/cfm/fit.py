@@ -7,8 +7,7 @@ Heads (vanilla SSE data from PyNifly's test assets at the commit pinned in tools
   argonian = maleheadargonian.nif   skinned to skeletonbeast.nif
   khajiit  = maleheadkhajiit.nif    skinned to skeletonbeast.nif  (meshes/actors/character/character
              assets/ in PyNifly)
-Every reference file is checked against its pinned sha256 (byte-identical fallback copies of the files
-that joined the sparse checkout later live in tests/fixtures/vanilla/, see reference_path).
+Every reference file is checked against its pinned sha256 (see reference_path).
 Headgear references for the twine (src/03_mesh.py; human skeleton, informational except the hair gate):
   helmet-SMP.nif               vanilla-style skinned helmet (also the transform proof below)
   maleorchair27.nif            hair MaleOrcHair27 (BSDynamicTriShape, NPC Head [Head]), a dreadlock
@@ -87,7 +86,6 @@ REFERENCE_SHA256 = {
     "SkyrimSE/maleorchair27.nif": "ef6f02e5bed6aee68c4f73b8667af2f6118158c23bf20212cf83b7dd37e01e60",
     "SkyrimSE/meshes/draugr lich01 hood.nif": "b95d4a3454676a1702c25a2fdc44c2fc998fcef6cfba722362184403047a11e6",
 }
-VANILLA_FIXTURES = ROOT / "tests" / "fixtures" / "vanilla"   # fallback copies, see reference_path
 KIND_HEADS = {"human": ("human",), "beast": ("argonian", "khajiit")}
 VARIANT_KIND = {"human_m": "human", "human_f": "human", "beast_m": "beast", "beast_f": "beast"}
 VARIANT_SKELETON = {"human_m": "skeleton.nif", "human_f": "skeleton_female.nif",
@@ -128,18 +126,19 @@ def _sha256(path: Path) -> str:
 def reference_path(rel: str) -> Path:
     """Path of a PyNifly reference NIF, checked against its pinned sha256.
 
-    Looks in third_party/PyNifly/tests/tests/<rel> (the sparse checkout listed in
-    tools/nifly/build_niflydll.py) first, then for the byte-identical copy in tests/fixtures/vanilla/:
-    a checkout made before a file joined PYNIFLY_SPARSE does not get it from build_niflydll.py, which
-    leaves checkouts already at the pinned commit alone (tests/fixtures/vanilla/provenance.json)."""
-    for cand in (PYNIFLY_TESTS / rel, VANILLA_FIXTURES / Path(rel).name):
-        if cand.exists():
-            want = REFERENCE_SHA256.get(rel)
-            if want and _sha256(cand) != want:
-                raise RuntimeError(f"{cand}: sha256 differs from the pinned reference {rel}")
-            return cand
-    raise FileNotFoundError(f"reference NIF {rel} not found in {PYNIFLY_TESTS} or {VANILLA_FIXTURES}; "
-                            "run tools/setup.sh")
+    The files live in third_party/PyNifly/tests/tests/<rel>, the sparse checkout listed in
+    tools/nifly/build_niflydll.py (PYNIFLY_SPARSE). build_niflydll.fetch() re-applies that list
+    to a checkout that is already at the pinned commit, and tools/setup.sh runs it on every call,
+    so a checkout made before a file joined the list gets it too."""
+    cand = PYNIFLY_TESTS / rel
+    if cand.exists():
+        want = REFERENCE_SHA256.get(rel)
+        if want and _sha256(cand) != want:
+            raise RuntimeError(f"{cand}: sha256 differs from the pinned reference {rel}")
+        return cand
+    raise FileNotFoundError(f"reference NIF {rel} not found in {PYNIFLY_TESTS}; run tools/setup.sh "
+                            "(or .venv/bin/python tools/nifly/build_niflydll.py --fetch-only, which "
+                            "re-applies the sparse list)")
 
 
 def reference_files() -> list:

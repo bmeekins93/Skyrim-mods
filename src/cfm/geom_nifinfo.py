@@ -193,6 +193,45 @@ class RawNif:
         return {"global_to_skin": g2s, "has_vertex_weights": has_w, "bones": bones}
 
 
+    def skin_partition_vertices(self, i: int) -> dict:
+        """Vertex data an SSE NiSkinPartition carries for its skinned BSTriShape (the shape's own
+        data size is 0). Layout: niftools nif.xml (develop), NiSkinPartition fields Num Partitions,
+        Data Size, Vertex Size, Vertex Desc (uint64; attribute flags = desc >> 44), Vertex Data
+        (struct BSVertexDataSSE): Vertex (3 floats) + Bitangent X (float) when VERTEX and TANGENT,
+        UV (2 half floats), Normal (3 normbytes) + Bitangent Y, Tangent (3 normbytes) + Bitangent Z
+        when TANGENT. normbyte b decodes as b / 255 * 2 - 1 (nifly src/Geometry.cpp:663-680).
+        Returns arrays pos, uv, normal, tangent, bitangent (missing attributes are empty)."""
+        r = self._at(i)
+        r.take("I")                                    # Num Partitions
+        data_size, vsize = r.take("II")
+        attrs = r.take("Q") >> 44
+        n = data_size // vsize if vsize else 0
+        nb = lambda b: np.asarray(b, dtype=float) / 255.0 * 2.0 - 1.0  # noqa: E731
+        out = {k: [] for k in ("pos", "uv", "normal", "tangent", "bitangent")}
+        has_tan = (attrs & 0x18) == 0x18
+        for k in range(n):
+            q = _Reader(self.data, r.p + k * vsize)
+            bx = by = bz = 0.0
+            if attrs & 0x1:
+                out["pos"].append(q.take("3f"))
+                if (attrs & 0x11) == 0x11:
+                    bx = q.take("f")
+                else:
+                    q.take("I")
+            if attrs & 0x2:
+                out["uv"].append(q.take("2e"))
+            if attrs & 0x8:
+                b = q.take("4B")
+                out["normal"].append(nb(b[:3]))
+                by = float(nb(b[3]))
+            if has_tan:
+                b = q.take("4B")
+                out["tangent"].append(nb(b[:3]))
+                bz = float(nb(b[3]))
+                out["bitangent"].append((bx, by, bz))
+        return {k: np.array(v, dtype=float) for k, v in out.items()}
+
+
 def _fmt_mat(m) -> str:
     m = np.asarray(m)
     rot = " ".join(f"{x:+.4f}" for x in m[:3, :3].ravel())
