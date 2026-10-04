@@ -1,6 +1,7 @@
 # Cardboard Face Mask (Skyrim Special Edition)
 
-Every adult humanoid NPC in Skyrim wears a cardboard cut-out of my face: a thin slab cut along
+Every adult humanoid NPC in Skyrim wears a cardboard cut-out of my face (once SPID and KEF are
+installed, see [Requirements](#requirements)): a thin slab cut along
 the outline of the head in `input/IMG_2117.PNG`, the photo printed on the front, corrugated
 cardboard edges, a brown kraft back with masking-tape strips, and a twine string that wraps
 awkwardly around the back of the head. Personal-use joke mod; no scripts.
@@ -18,7 +19,7 @@ matches the NIF in `dist/`). This is not an in-game screenshot.*
 More previews: `docs/renders/textures_atlas.png` (the texture atlas), `fit_mask_*.png` (fit on each
 head), `render_vanilla_helmet.png` (a vanilla helmet rendered the same way, as a reference).
 
-> **Status.** The package is built and checked offline (meshes, textures, plugin, SPID line,
+> **Status.** The package is built and checked offline (meshes, textures, plugin, SPID lines,
 > zip; see "How it is checked" below). It has **not yet been tried in the game**: there is no
 > Skyrim install where it was built. Run the checklist in [docs/TESTING.md](docs/TESTING.md) the
 > first time you install it.
@@ -33,10 +34,22 @@ head), `render_vanilla_helmet.png` (a vanilla helmet rendered the same way, as a
   reads `CardboardFaceMask_DISTR.ini` and puts one mask into the inventory of every NPC that has the
   `ActorTypeNPC` keyword and is not a child:
   `Item = 0x800~CardboardFaceMask.esp|ActorTypeNPC|NONE|NONE|-C|1|100`.
-  NPCs are then expected to wear it in the otherwise unused slot 55. That last step is the game's
-  own behaviour, not SPID's (SPID only adds the item to the inventory), and it has **not been
-  verified in game yet**: it is step 3 of [docs/TESTING.md](docs/TESTING.md); background in
-  [docs/SPID_NOTES.md](docs/SPID_NOTES.md) section 9.
+  **SPID does not make anyone wear it**: it only adds items to inventories (its item-equipping code
+  was removed in 2024), and users report that NPCs leave such armor in the inventory unworn.
+* So the same ini also gives the same NPCs a keyword:
+  `Keyword = KEFEquip_0x800_CardboardFaceMask_esp|ActorTypeNPC|NONE|NONE|-C|NONE|100`.
+  SPID creates the keyword itself (no plugin defines it). On its own it does nothing;
+  [KEF - Keyword Equip Framework](https://www.nexusmods.com/skyrimspecialedition/mods/185273), a
+  small SKSE plugin you install separately, reads `KEFEquip_0x800_CardboardFaceMask_esp` and makes
+  the NPC equip item `0x800` of `CardboardFaceMask.esp`, i.e. the mask, in slot 55. KEF's page
+  indicates that KEF adds the item itself, so with KEF an NPC will probably carry **two** masks,
+  one of them worn (harmless; the `Item` line is kept in case KEF only equips). Without KEF, NPCs
+  are expected to just carry the mask (users report this for SPID items; docs/TESTING.md 3b.1
+  checks it). None of this has been tried in game yet; how SPID handles both lines is checked
+  against SPID's source, KEF only against its Nexus page ([docs/SPID_NOTES.md](docs/SPID_NOTES.md)
+  sections 9 and 13, which list what is verified).
+* `equip_method: engine` in `config.yaml` drops the keyword line (for players who do not want KEF;
+  then NPCs probably only carry the mask).
 * The player never gets one automatically (SPID skips the player); try it on with the console.
 * The meshes are rigidly skinned to the head bone (`NPC Head [Head]`), so the mask follows the head.
 
@@ -48,9 +61,23 @@ head), `render_vanilla_helmet.png` (a vanilla helmet rendered the same way, as a
 | [SKSE64](https://skse.silverlock.org/) | 2.3.1 (the "Anniversary Edition" build for 1.7.104) | download link on skse.silverlock.org points to [Nexus](https://www.nexusmods.com/skyrimspecialedition/mods/30379?tab=files); start the game with `skse64_loader.exe` |
 | [Address Library for SKSE Plugins](https://www.nexusmods.com/skyrimspecialedition/mods/32444) | the release for 1.7.104 (you use v13) | SKSE needs `Data\SKSE\Plugins\versionlib-1-7-104-0.bin` |
 | [Spell Perk Item Distributor](https://www.nexusmods.com/skyrimspecialedition/mods/36869) | 7.3.3 is the newest source release | SE/AE build (not the VR one) |
+| [KEF - Keyword Equip Framework](https://www.nexusmods.com/skyrimspecialedition/mods/185273) | the newest file | makes NPCs **wear** the mask; without it they are expected to only carry it. Needs SKSE and Address Library. Not needed with `equip_method: engine` |
 
 powerofthree's Tweaks is **not** needed (the ini uses a FormID, not an EditorID). Why SPID 7.3.3
 loads on 1.7.104, with source citations: [docs/SPID_NOTES.md](docs/SPID_NOTES.md) section 11.
+
+**What is known about KEF.** Its source code could not be found and its Nexus page could not be
+opened from the build machine, so everything about KEF comes from search-engine extracts of that
+page: the keyword format `KEFEquip_0x[FORMID]_[MODNAME]_[EXTENSION]`, the example
+`KEFEquip_0x800_MyCoolAmulet_esp` (the same shape as ours: ID `0x800` in an `.esp`), "compatible
+with all Skyrim versions (SE, AE, VR)", and a last update of its CommonLibSSE-NG "for new skyrim
+update". The same page says that if the NPC already wears another item in that slot, "the item
+is NOT added to the NPC's inventory and is not equipped", unless the keyword ends in
+`_forceEquip_true` (then KEF unequips the other item); its second example names a plugin with an
+`_` (`Kad_AkaviriHats.esp`). That wording implies KEF normally adds the item itself. **Not
+verified:** that the current KEF file loads on 1.7.104 (check `skse64.log`), and that KEF adds the
+item. The ini therefore keeps both lines, and with KEF an NPC will probably carry a second mask,
+which is harmless. Details: [docs/SPID_NOTES.md](docs/SPID_NOTES.md) section 13.
 
 ## Install
 
@@ -64,7 +91,8 @@ meshes/CardboardFaceMask/mask_human_m.nif, mask_human_f.nif, mask_beast_m.nif, m
 textures/CardboardFaceMask/mask_d.dds, mask_n.dds, twine_d.dds, twine_n.dds
 ```
 
-Install SKSE, Address Library and SPID first, then one of:
+Install SKSE, Address Library, SPID and KEF first (each from its Nexus page; with MO2 or Vortex
+like any other mod), then one of:
 
 * **Mod Organizer 2**: *Install a new mod from an archive* -> pick `CardboardFaceMask.zip` -> OK.
   Tick the mod in the left pane and make sure `CardboardFaceMask.esp` is ticked in the right pane
@@ -104,6 +132,7 @@ outline does not match `config.yaml`, and so does the package stage). Options:
 | `scale_human`, `scale_female`, `scale_beast` | 1.0, 0.96, 1.25 | per-mesh scale (female is applied on top of human) |
 | `edge_wobble_units` | 0.04 | hand-cut jitter of the outline; 0 = clean die-cut |
 | `string_radius_units`, `string_sag`, `string_asymmetry` | 0.06, 0.6, 0.35 | twine thickness, droop at the back, lopsidedness |
+| `string_clearance_units` | 1.0 | how far the twine rides above the bald scalp at the back of the head, i.e. over typical hair (0.15 = tight to the skull, hidden under hair) |
 | `tape_strip` | true | masking-tape strips on the back |
 | `texture_size`, `twine_texture_size` | 2048, 512 | texture resolution (powers of two) |
 | `plugin_name` | `CardboardFaceMask.esp` | plugin file name (the ini follows it) |
@@ -112,47 +141,65 @@ outline does not match `config.yaml`, and so does the package stage). Options:
 | `exclude_children` | true | adds the SPID trait `-C` |
 | `chance_percent` | 100 | share of matching NPCs that get a mask (0 < chance <= 100). Below 100 the ini gets SPID's `!` suffix (e.g. `25!`), so the same NPCs keep their masks every time you load that character; without `!` SPID re-rolls on every game launch |
 | `distribute_to_player` | false | has no effect: SPID never gives items to the player |
+| `equip_method` | `kef` | `kef`: the ini has the `Item` line plus the `KEFEquip_...` `Keyword` line, so NPCs wear the mask when KEF is installed. `engine`: `Item` line only; SPID never equips items, so NPCs will probably just carry the mask. With `kef` the plugin file name may only use letters and digits (optionally joined by single `_`) before `.esp` |
 
 Distribution-only changes (chance, excluding races or named NPCs) can also be made by editing the
 installed `CardboardFaceMask_DISTR.ini`; its comment header explains every field and contains
-ready-made example lines. Keep exactly one active `Item =` line (several matching lines add up to
-several masks).
+ready-made example pairs. Keep exactly one active `Item =` line (several matching lines add up to
+several masks) and one `Keyword =` line, and make the same change in both: the keyword decides
+who wears a mask, the item line who has one. For a chance below 100 % copy the commented
+"one NPC in four" pair (the chance goes on the `Keyword` line and the `Item` line follows the
+keyword; two separate chance rolls would mostly pick different NPCs).
 
 ## In-game test checklist (short version)
 
 Full plan with expected results: [docs/TESTING.md](docs/TESTING.md). Open the console with the `~` key.
 
-1. SPID log (`Documents\My Games\Skyrim Special Edition\SKSE\po3_SpellPerkItemDistributor.log`,
-   inside the bottle's `drive_c/users/<user>/Documents/` under CrossOver) lists
-   `CardboardFaceMask_DISTR.ini`, has no `Failed to parse entry` or `FAIL` line mentioning
-   `CardboardFaceMask`, and says `Registered x/y Items` with x = y (1/1 if no other mod
-   distributes items; SPID counts the Item lines of all ini files together).
-2. `help "Cardboard Face Mask" 4` shows the item's full FormID. For an ESL plugin it looks like
+1. `skse64.log` (`Documents\My Games\Skyrim Special Edition\SKSE\`, inside the bottle's
+   `drive_c/users/<user>/Documents/` under CrossOver) lists the SPID and KEF DLLs as loaded, not
+   disabled. KEF's DLL name is not documented here: note the `.dll` file name in the KEF download's
+   `SKSE/Plugins` folder and look for that name in the log.
+2. SPID log (`po3_SpellPerkItemDistributor.log`, same folder) lists `CardboardFaceMask_DISTR.ini`,
+   has no `Failed to parse entry` or `FAIL` line mentioning `CardboardFaceMask`, and says
+   `Registered x/y Items` and `Registered x/y Keywords` with x = y (1/1 if no other mod distributes
+   items or keywords; SPID counts the lines of all ini files together). For each NPC it processed it
+   logs `Distribution for <NPC>` with an `ARMO` line (`"Cardboard Face Mask"`) and a `KYWD` line
+   (`KEFEquip_0x800_CardboardFaceMask_esp`).
+3. `help "Cardboard Face Mask" 4` shows the item's full FormID. For an ESL plugin it looks like
    `FExxx800`: `FE`, a three-digit light-plugin index that depends on your load order, then `800`.
-3. Try it on: `player.additem FExxx800 1`, then `player.equipitem FExxx800` (use your ID). Check it in
+4. Try it on: `player.additem FExxx800 1`, then `player.equipitem FExxx800` (use your ID). Check it in
    third person: photo the right way round, cardboard back, twine, follows the head.
-4. Walk into a town: adult NPCs wear masks, children do not. Click an NPC in the console and type
-   `inv` to see whether the mask is in its inventory.
-5. Spawn test NPCs: find a base ID with `help "<name>" 4` (look for an `NPC_` line), then
+5. Walk into a town: adult NPCs wear masks, children do not. Click an NPC in the console, then
+   `inv` lists its inventory (the mask should be there, probably twice with KEF). To tell "worn"
+   from "carried" without looking you can try `getequipped FExxx800` (not verified: GetEquipped is
+   a condition function, CK wiki `[ActorID.]GetEquipped ObjectID`, 1 when equipped, and many
+   condition functions also work in the console; expect `1.00` when worn, `0.00` when only
+   carried). If the console does not accept it, just look at the NPC.
+6. Spawn test NPCs: find a base ID with `help "<name>" 4` (look for an `NPC_` line), then
    `player.placeatme <baseID> 1`. Cover male, female, Khajiit and Argonian NPCs.
 
 ## Troubleshooting
 
 | Symptom | Likely cause | What to do |
 |---|---|---|
-| Nobody wears a mask; the SPID log does not exist | SPID not loaded | Start the game with `skse64_loader.exe`. Check `skse64.log` (same SKSE log folder) for SPID; "address library needs to be updated" means the Address Library for 1.7.104 is missing. |
+| Nobody has a mask (`inv`); the SPID log does not exist | SPID not loaded | Start the game with `skse64_loader.exe`. Check `skse64.log` (same SKSE log folder) for SPID; "address library needs to be updated" means the Address Library for 1.7.104 is missing. |
 | SPID log does not list `CardboardFaceMask_DISTR.ini` | ini in the wrong place or renamed | It must be directly in `Data`, named `*_DISTR.ini`. |
 | Log has `FAIL - formID doesn't exist` for `CardboardFaceMask.esp` (and `Registered x/y Items` with x < y) | plugin not active, or renamed | Enable `CardboardFaceMask.esp`; the name in the ini must match the plugin file. |
-| Log has `Failed to parse entry [Item = ...]`; no `Registered ... Items` line | the ini line was edited into a form SPID cannot read (e.g. an extra `\|` section, a bad count or chance). SPID usually shows no message in game for this | Compare the line with the commented examples in the ini, or reinstall the ini from the zip. |
+| Log has `Failed to parse entry [Item = ...]` or `[Keyword = ...]`; that type has no `Registered ...` line | the ini line was edited into a form SPID cannot read (e.g. an extra `\|` section, a bad count or chance). SPID shows no message in game for this | Compare the line with the commented examples in the ini, or reinstall the ini from the zip. |
+| NPCs have the mask in `inv` but nobody wears it | KEF not installed, not loaded (look for its DLL name in `skse64.log`: missing, or disabled because its Address Library/runtime does not match 1.7.104), or `equip_method: engine` | Install or update KEF; make sure the ini has the `Keyword = KEFEquip_0x800_CardboardFaceMask_esp\|...` line (rebuild with `equip_method: kef`). |
+| A few NPCs carry one mask but do not wear it, and they wear another item (e.g. another mod's accessory) that uses slot 55 | KEF's page says KEF skips an NPC whose slot is already taken: it neither adds nor equips its item (not verified) | Accept it, or force the mask on: in the installed ini append `_forceEquip_true` to the keyword name, i.e. `Keyword = KEFEquip_0x800_CardboardFaceMask_esp_forceEquip_true\|...` (at a chance below 100 % also in the `Item` line's filter). KEF then unequips the other item. |
+| Most NPCs wear it, a few only carry it (nothing else in slot 55) | not known yet: KEF reportedly equips when an NPC's 3D loads, and SPID may distribute after that for some NPCs (unverified), or the game swapped the mask out | Leave the cell and come back; select the NPC and `equipitem FExxx800` to confirm the mesh works; keep `non_playable: false`. Report what you see. |
+| Two masks in an NPC's `inv`, one worn | expected with KEF: KEF's page indicates that it adds the item itself, on top of SPID's `Item` line | Harmless. To keep one, you can comment out the `Item =` line in the installed ini (only if KEF really adds the mask: check that NPCs still wear one afterwards, docs/TESTING.md 3b.2). |
+| The mask count in an NPC's `inv` grows (3, 4, ...) after reloads or cell changes | KEF adding a copy on every 3D load (not known; KEF's page does not say) | Report it with the KEF version. Commenting out the `Item =` line removes SPID's copy only; `equip_method: engine` (or removing KEF) stops it. |
+| Masks on NPCs that should not have one, or mask carried by NPCs without the keyword | the `Item` and `Keyword` lines were edited differently | Make the same change in both lines (see the ini's examples). |
 | Different NPCs have masks after each restart | `chance_percent` below 100 without the `!` suffix | Use e.g. `25!` (the generated ini already does). |
-| `inv` shows the mask but the NPC does not wear it | the game chose not to equip it, or another mod's item uses slot 55 | Select the NPC and `equipitem FExxx800` to confirm the mesh works; look for other slot-55 items; keep `non_playable: false`. Report what you see. |
-| Mask worn (in `inv`/equipped) but invisible on one race | race not covered by the armatures (often a modded race) | Note the NPC's race; it has to be added to the plugin's race list and the plugin rebuilt. |
+| Mask stays invisible on NPCs of one race, even after selecting one and typing `equipitem FExxx800` | race not covered by the armatures (often a modded race) | Note the NPC's race; it has to be added to the plugin's race list and the plugin rebuilt. |
 | Purple mask | textures not found | Check `textures/CardboardFaceMask/*.dds` were installed next to the meshes (MO2: no conflicting mod hides them). |
 | Mask floats too far forward or cuts into the face | head shape differs from vanilla (head-mesh or RaceMenu sliders), or beast scale | Adjust `forward_offset_units`, `size_factor`, `scale_*` and rebuild. |
 | Mask does not turn with the head | skinning problem | Please report; every vertex is meant to follow `NPC Head [Head]`. |
-| Children wear masks | `exclude_children: false`, or the child is not flagged as a child | Check the ini traits section is `-C`. |
-| Crash (CTD) when NPCs load | unknown | Disable `CardboardFaceMask.esp`; if the crash stops, keep the crash log (e.g. from a crash-logger SKSE plugin) and report it. Also confirm SKSE, Address Library and SPID match 1.7.104. |
-| The player has no mask | by design | Use the console (step 3 above). |
+| Children wear masks | `exclude_children: false`, or the child is not flagged as a child | Check the ini traits section is `-C` on both lines. |
+| Crash (CTD) when NPCs load | unknown | Disable `CardboardFaceMask.esp`; if the crash stops, keep the crash log (e.g. from a crash-logger SKSE plugin) and report it. Also confirm SKSE, Address Library, SPID and KEF match 1.7.104. |
+| The player has no mask | by design | Use the console (step 4 above). |
 
 ## Uninstall
 
@@ -253,10 +300,12 @@ record and the vanilla FormIDs against a second source, Blender renders on vanil
 package stage (`src/07_package.py`): the build products must match `config.yaml` (silhouette mode,
 photo) and each other (no stage output older than its input, no test fixtures); every texture path
 in any of the nine texture slots of every NIF and every model path in the ESP must exist in the
-package with exact case; no stray or unreferenced files; the SPID line must point at the shipped
-plugin's ARMO; and the zip must match the folder byte for byte. The package is assembled in a
-staging folder and only replaces `dist/` when all of this passes.
-The SPID line itself was derived from SPID's source code: [docs/SPID_NOTES.md](docs/SPID_NOTES.md).
+package with exact case; no stray or unreferenced files; the SPID `Item` line must point at the
+shipped plugin's ARMO, the `Keyword` line must name the KEF keyword for that ARMO, both must select
+the same NPCs and come through SPID's input clean-up unchanged; and the zip must match the folder
+byte for byte. The package is assembled in a staging folder and only replaces `dist/` when all of
+this passes. `.venv/bin/python src/07_package.py --check-only` re-validates an existing `dist/`.
+The SPID lines were derived from SPID's source code: [docs/SPID_NOTES.md](docs/SPID_NOTES.md).
 
 ## Credits and licenses
 
@@ -272,6 +321,7 @@ The SPID line itself was derived from SPID's source code: [docs/SPID_NOTES.md](d
 | [ZhengPeng7/BiRefNet-matting](https://huggingface.co/ZhengPeng7/BiRefNet-matting) @ `eccde0a` | foreground matte | MIT (Hugging Face model metadata) |
 | [Blender](https://www.blender.org/) 4.2.14 LTS | offline preview renders only | GPL-2.0-or-later |
 | [SPID](https://github.com/powerof3/Spell-Perk-Item-Distributor) by powerofthree | runtime distribution (installed separately, not included) | MIT |
+| [KEF - Keyword Equip Framework](https://www.nexusmods.com/skyrimspecialedition/mods/185273) by ziman62 | makes NPCs wear the mask at runtime (installed separately, not included) | see its Nexus page |
 
 The build tools above are not shipped in the mod package; the package contains only files this
 project generated. Python packages are listed with versions in `requirements*.txt` and keep their

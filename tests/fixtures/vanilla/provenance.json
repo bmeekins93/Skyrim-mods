@@ -5,7 +5,23 @@
   "commit": "bcb723aba2ca4a80e976d957efbde69b33f2e56f",
   "path": "tests/tests/SkyrimSE/meshes/actors/character/character assets/maleheadkhajiit.nif",
   "git_blob": "c0f069c1784121ce84adcfe073f604abd7a9299e",
-  "sha256": "de5602f85a1c5be4b312120a5b0ab0fc9add371b47c04e1db35b8f93e62bab6b",
-  "note": "Byte-identical copy of PyNifly's test asset at the commit pinned in tools/nifly/build_niflydll.py. Game data (c) Bethesda; kept only as an offline test reference. Remove once tools/setup.sh adds the path to PyNifly's sparse checkout (cfm.fit.reference_path then uses third_party/PyNifly)."
- }
+  "sha256": "de5602f85a1c5be4b312120a5b0ab0fc9add371b47c04e1db35b8f93e62bab6b"
+ },
+ "maleorchair27.nif": {
+  "what": "hair MaleOrcHair27 (BSDynamicTriShape skinned to NPC Head [Head], texture textures\\actors\\character\\hair\\HairDreads2.dds), a dreadlock mohawk; src/03_mesh.py's hair reference for the twine",
+  "source_repo": "https://github.com/BadDogSkyrim/PyNifly.git",
+  "commit": "bcb723aba2ca4a80e976d957efbde69b33f2e56f",
+  "path": "tests/tests/SkyrimSE/maleorchair27.nif",
+  "git_blob": "670b3a77d4a35de57d79c5113e42f2ee3b5723ea",
+  "sha256": "ef6f02e5bed6aee68c4f73b8667af2f6118158c23bf20212cf83b7dd37e01e60"
+ },
+ "draugr lich01 hood.nif": {
+  "what": "skinned cloth hood 'Hood' (human skeleton, vertices stored in model space); src/03_mesh.py's informational hood reference for the twine",
+  "source_repo": "https://github.com/BadDogSkyrim/PyNifly.git",
+  "commit": "bcb723aba2ca4a80e976d957efbde69b33f2e56f",
+  "path": "tests/tests/SkyrimSE/meshes/draugr lich01 hood.nif",
+  "git_blob": "608df189d3d89dbf862654fb822e2256dbfa29f4",
+  "sha256": "b95d4a3454676a1702c25a2fdc44c2fc998fcef6cfba722362184403047a11e6"
+ },
+ "note": "Byte-identical copies of PyNifly test assets at the commit pinned in tools/nifly/build_niflydll.py, all listed in its PYNIFLY_SPARSE. Game data (c) Bethesda; kept only as offline test references. cfm.fit.reference_path uses third_party/PyNifly/tests/tests/<path> when present and falls back to these copies, because build_niflydll.fetch() does not re-apply an extended PYNIFLY_SPARSE in a checkout that is already at the pinned commit. Remove this folder once fetch() does."
 }

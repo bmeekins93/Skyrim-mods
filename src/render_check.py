@@ -3,6 +3,9 @@
 Examples (run from the repo root):
     .venv/bin/python src/render_check.py --nif work/nif/mask_human_m.nif --head human \\
         --out docs/renders/render_human_m.png [--pose 35,15,0] [--checker] [--views front,left]
+    .venv/bin/python src/render_check.py --nif work/nif/mask_human_m.nif --head human \\
+        --extra-nif third_party/PyNifly/tests/tests/SkyrimSE/maleorchair27.nif \\
+        --out docs/renders/render_human_m_hair.png
     .venv/bin/python src/render_check.py --nif third_party/PyNifly/tests/tests/SkyrimSE/helmet-SMP.nif \\
         --head human --out docs/renders/render_vanilla_helmet.png
 
@@ -78,6 +81,8 @@ def run_blender(blender: Path, args, view_dir: Path) -> dict:
            "--exposure", str(args.exposure)]
     for nif in args.nif:
         cmd += ["--nif", str(nif)]
+    for nif in args.extra_nif:
+        cmd += ["--extra-nif", str(nif)]
     if args.checker:
         cmd.append("--checker")
     if args.no_cull:
@@ -105,6 +110,8 @@ def _short(desc: str) -> str:
 
 def title_lines(rep: dict) -> list:
     nifs = ", ".join(Path(n).name for n in rep["nifs"])
+    if rep.get("extra_nifs"):
+        nifs += " + " + ", ".join(Path(n).name for n in rep["extra_nifs"]) + " (overlay)"
     if not nifs:
         head = f"{Path(rep['head_nif']).name} ({rep['head']} head only)"
     else:
@@ -179,9 +186,11 @@ def mesh_lines(m: dict) -> list:
 
 
 def head_lines(m: dict) -> list:
+    """(text, level) lines for the head overlay or an --extra-nif overlay (drawn, never checked)."""
     moving = [b for b, v in m.get("bones", {}).items() if v["head_driven"]]
     still = [b for b, v in m.get("bones", {}).items() if not v["head_driven"]]
-    out = [(f"Head overlay {m['name']} ({Path(m['source']).name}), {m['verts']} verts", "title"),
+    what = "Head overlay" if m["role"] == "head" else "Extra overlay (matte, not checked)"
+    out = [(f"{what} {m['name']} ({Path(m['source']).name}), {m['verts']} verts", "title"),
            (f"  follows head pose: {', '.join(moving) or '-'}", "ok"),
            (f"  stays put: {', '.join(still) or '-'}", "ok")]
     pd = m.get("pose_displacement")
@@ -230,7 +239,7 @@ def report_lines(rep: dict) -> list:
         if m["role"] == "nif":
             out += mesh_lines(m)
     for m in rep["meshes"]:
-        if m["role"] == "head":
+        if m["role"] != "nif":
             out += head_lines(m)
     return out
 
@@ -326,6 +335,9 @@ def panel_cell(draw, rows, xy, tile, fnt) -> None:
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--nif", action="append", default=[], help="NIF to show (repeatable)")
+    ap.add_argument("--extra-nif", action="append", default=[],
+                    help="overlay NIF such as a hair or hood: drawn matte dark brown and posed with the "
+                         "head, but not checked (repeatable)")
     ap.add_argument("--head", choices=["human", "beast", "female", "none"], default="human",
                     help="head overlay: vanilla malehead.nif / maleheadargonian.nif, "
                          "PyNifly's CitrusFemHead.nif test head, or none")
@@ -369,6 +381,7 @@ def main(argv=None) -> int:
     if not args.nif and args.head == "none":
         raise SystemExit("nothing to render: give --nif and/or --head")
     args.nif = [str(resolve_nif(n)) for n in args.nif]      # Blender runs with cwd = repo root
+    args.extra_nif = [str(resolve_nif(n)) for n in args.extra_nif]
     out = Path(args.out).expanduser().resolve()
     blender = find_blender()
     with tempfile.TemporaryDirectory(prefix="cfm_render_") as tmp:

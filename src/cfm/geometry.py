@@ -24,8 +24,9 @@ from .geom_mesh import closest_points, face_cross, vertex_normals, winding_numbe
 from .geom_sheet import (Bend, points_in_polygon, conforming_triangulation, interior_points,
                          make_boundary)
 from .geom_mesh import ray_hits
-from .geom_twine import (ASYM_UNITS, SAG_DROP_UNITS, STRING_HEAD_GAP, TEMPLE_FROM_EYE_PIT, ClearanceProfile,
-                         adaptive_resample, string_path, tape_strip, tube)
+from .geom_twine import (ASYM_SIDE_UNITS, ASYM_UNITS, BACK_EXTRA, CLEARANCE_FACTOR, CROWN_MARGIN, EAR_TOP_GAP,
+                         SAG_DROP_UNITS, SMOOTH_SIGMA, STRING_HEAD_GAP, TEMPLE_FROM_EYE_PIT, ClearanceProfile,
+                         adaptive_resample, contact_heights, ear_gaps, string_path, tape_strip, tube)
 
 VARIANTS = ("human_m", "human_f", "beast_m", "beast_f")
 SEED = 2117                    # IMG_2117: every random choice derives from this
@@ -192,23 +193,54 @@ def edge_crossings(loop, h: float):
     return float(a.min()), float(a.max())
 
 
-def build_twine(loop, bend: Bend, layout: dict, cfg: dict, heads, anchor: dict, k: float, rng):
-    """Twine tube + tape strips. heads = [(name, verts, tris)] the string must wrap (union)."""
+def build_twine(loop, bend: Bend, layout: dict, cfg: dict, heads, anchor: dict, kind: str, k: float, rng, hair=()):
+    """Twine tube + tape strips. heads = [(name, verts, tris)] the string must wrap (union); hair =
+    [(name, verts, tris)] reference hair it rides over as well (STRING_HEAD_GAP off its surface).
+
+    The string rides string_clearance_units * CLEARANCE_FACTOR[kind] over the bald head(s) round the
+    sides, swelling by BACK_EXTRA[kind] of that toward the back centre, over the ears where the kind has
+    ears beside the head (anchor["side_ears"]); see cfm.geom_twine."""
     r = float(cfg["string_radius_units"])
     asym = float(cfg["string_asymmetry"])
     sag = float(cfg["string_sag"])
+    clear = float(cfg.get("string_clearance_units", STRING_HEAD_GAP))
+    if clear < STRING_HEAD_GAP:
+        raise ValueError(f"string_clearance_units {clear} < the minimum head gap {STRING_HEAD_GAP}")
+    c_side = max(clear * CLEARANCE_FACTOR[kind], STRING_HEAD_GAP)
+    c_back = c_side * (1.0 + BACK_EXTRA[kind])
     attach, h_side = {}, {}
     for side in (+1, -1):
         h_side[side] = h = side * asym * ASYM_UNITS
         a_min, a_max = edge_crossings(loop, h)
         a_edge = a_max if side > 0 else a_min
         attach[side] = (a_edge - side * ATTACH_INSET * k, a_edge - side * LIFT_INSET * k)
-    z_eye = bend.z_eye
-    profile = ClearanceProfile([(v, t) for _, v, t in heads], z_eye - asym * ASYM_UNITS - sag * SAG_DROP_UNITS - 1.0,
-                               z_eye + asym * ASYM_UNITS + 1.0, STRING_HEAD_GAP + r, [0.0, anchor["centre"][1]],
-                               y_cut=anchor["eye_pit_y"] + TEMPLE_FROM_EYE_PIT)
-    dense, path_info = string_path(bend, attach, profile, r, sag, asym)
-    path = adaptive_resample(dense, TWINE_MAX_SEGMENT)
+    ears = anchor.get("side_ears")
+    z_cap = anchor["crown_z"] - CROWN_MARGIN
+    ear_top = ears["top_z"] if ears else None
+    side_z = contact_heights(bend.z_eye, asym, r, ear_top, z_cap)
+    z_all = list(side_z.values()) + [bend.z_eye + h for h in h_side.values()]
+    margin = 1.0 + 3 * SMOOTH_SIGMA
+    profile = ClearanceProfile([(v, t) for _, v, t in heads], min(z_all) - sag * SAG_DROP_UNITS - margin,
+                               max(z_all) + margin, c_side + r, [0.0, anchor["centre"][1]],
+                               y_cut=anchor["eye_pit_y"] + TEMPLE_FROM_EYE_PIT, grow_front=STRING_HEAD_GAP + r,
+                               hair=[(v, t) for _, v, t in hair], grow_hair=STRING_HEAD_GAP + r,
+                               grow_back=c_back + r, z_need=max(z_all) + EAR_TOP_GAP)
+    # smoothing (and the ring spacing) round the string off over the ear: lift until the built tube
+    # clears the ear top by EAR_TOP_GAP
+    extra = 0.0
+    for _ in range(6):
+        side_z = contact_heights(bend.z_eye, asym, r, ear_top, z_cap, extra)
+        dense, path_info = string_path(bend, attach, profile, r, sag, asym, side_z)
+        path = adaptive_resample(dense, TWINE_MAX_SEGMENT)
+        if not ears:
+            break
+        short = EAR_TOP_GAP - min(g for g in ear_gaps(path, ears, r).values() if g is not None)
+        if short <= 2e-4:
+            break
+        extra += short + 0.002
+    else:
+        raise ValueError(f"twine does not clear the ear tops by {EAR_TOP_GAP} after lifting {extra:.3f}")
+    nominal = 2 * asym * ASYM_SIDE_UNITS
     tile = float(layout.get("twine", {}).get("tile_length_units", 2.0))
     v, t, uv, n, length = tube(path, r, TWINE_SIDES, tile)
     twine = Part("twine", TWINE_SHAPE, v, orient(v, t, n), uv, n, "twine")
@@ -226,7 +258,14 @@ def build_twine(loop, bend: Bend, layout: dict, cfg: dict, heads, anchor: dict, 
             parts.append(Part(f"tape_{'r' if side > 0 else 'l'}", MASK_SHAPE, tv, tt, tuv,
                               vertex_normals(tv, tt), "tape"))
     info = {"attach_sheet": {("+X" if s > 0 else "-X"): [round(x, 4) for x in a] for s, a in attach.items()},
-            "length": round(length, 3), "rings": int(len(path)), "head_gap": STRING_HEAD_GAP,
+            "length": round(length, 3), "rings": int(len(path)), "radius": r, "clearance_units": clear,
+            "clearance_side_back": [round(c_side, 4), round(c_back, 4)], "min_head_gap": STRING_HEAD_GAP,
+            "side_ears": ears, "ear_lift_extra": round(extra, 4),
+            "ear_gaps": ({("+X" if s_ > 0 else "-X"): None if g is None else round(g, 4)
+                          for s_, g in ear_gaps(path, ears, r).items()} if ears else None),
+            "high_side_cap": round(z_cap, 4),
+            "high_side_capped": bool(path_info["side_height_difference"] < nominal - 1e-6),
+            "rides_over_hair": [name for name, _, _ in hair],
             "profile_centre": [round(float(x), 4) for x in profile.centre], **path_info,
             "u_max": round(float(uv[:, 0].max()), 4)}
     return parts, path, info
@@ -235,8 +274,11 @@ def build_twine(loop, bend: Bend, layout: dict, cfg: dict, heads, anchor: dict, 
 # --- top level ------------------------------------------------------------------------------------
 
 
-def build_variant(variant: str, outline: dict, layout: dict, fit: dict, heads, cfg: dict) -> MaskMesh:
-    """heads = [(name, verts, tris)]: every reference head of the variant's kind (model space)."""
+def build_variant(variant: str, outline: dict, layout: dict, fit: dict, heads, cfg: dict, hair_refs=(),
+                  head_clearance: bool = True) -> MaskMesh:
+    """heads = [(name, verts, tris)]: every reference head of the variant's kind (model space);
+    hair_refs = [(name, verts, tris)]: reference hair the twine rides over (03_mesh.TWINE_OVER_HAIR).
+    head_clearance=False skips the (slow) mask/twine-to-head distance report."""
     kind = fit["variant_kind"][variant]
     anchor = fit["anchors"][kind]
     hair = float(fit["hair_allowance_units"])
@@ -248,7 +290,7 @@ def build_variant(variant: str, outline: dict, layout: dict, fit: dict, heads, c
                 anchor["nose_tip"][1] + float(cfg["forward_offset_units"]), anchor["eye_line_z"])
     rng = np.random.default_rng(SEED)
     parts, bnd, loop = build_slab(poly, bend, layout, m, k, float(cfg["edge_wobble_units"]), rng)
-    twine_parts, path, twine_info = build_twine(loop, bend, layout, cfg, heads, anchor, k, rng)
+    twine_parts, path, twine_info = build_twine(loop, bend, layout, cfg, heads, anchor, kind, k, rng, hair_refs)
     mesh = MaskMesh(variant, parts + twine_parts)
     top, bottom = float(loop[:, 1].max() + bend.z_eye), float(loop[:, 1].min() + bend.z_eye)
     mesh.report = {
@@ -268,7 +310,8 @@ def build_variant(variant: str, outline: dict, layout: dict, fit: dict, heads, c
                             "back_face_gap_to_nose": round(bend.y_back0 - fit["heads"][name]["nose_tip"][1], 3)}
                      for name, _, _ in heads},
     }
-    mesh.report["clearance"] = {name: clearance(mesh, v, t) for name, v, t in heads}
+    if head_clearance:
+        mesh.report["clearance"] = {name: clearance(mesh, v, t) for name, v, t in heads}
     mesh.report["twine_vs_slab"] = twine_inside_slab(mesh, bend, loop)
     return mesh
 
@@ -286,21 +329,56 @@ def clearance(mesh: MaskMesh, head_v, head_t) -> dict:
     return out
 
 
-def shell_check(points, centre, shell_v, shell_t, tol: float = 0.0) -> dict:
-    """Are points under a headgear shell? Rays from `centre` through each point: where the ray hits
-    the shell at all (the shell covers that direction), the point must lie before the last hit."""
+def shell_depth(points, centre, shell_v, shell_t) -> np.ndarray:
+    """Per point, along the ray from `centre` through it: how far it lies beyond the shell's
+    outermost hit (> 0 outside the shell, < 0 under it); nan where the ray misses the shell."""
     p = np.asarray(points, float)
     c = np.asarray(centre, float)
     d = p - c
     r = np.linalg.norm(d, axis=1)
     hits = ray_hits(np.repeat(c[None], len(p), 0), d / r[:, None], shell_v, shell_t)
-    covered = np.array([len(h) > 0 for h in hits])
-    poke = np.array([r_ - h[-1] if len(h) else -np.inf for h, r_ in zip(hits, r)])
-    out = poke > tol
-    return {"points": int(len(p)), "covered": int(covered.sum()), "outside": int(out.sum()),
-            "max_poke": round(float(poke[covered].max()), 4) if covered.any() else None,
-            "min_margin": round(float(-poke[covered].max()), 4) if covered.any() else None,
-            "worst_point": p[int(np.argmax(poke))].round(3).tolist() if covered.any() else None}
+    return np.array([r_ - h[-1] if len(h) else np.nan for h, r_ in zip(hits, r)])
+
+
+def twine_vs_headgear(line, centre, gear_v, gear_t, tol: float, head=None, thin_below: float | None = None,
+                      run_y_max: float = np.inf, near: float | None = None) -> dict:
+    """Where the twine centre line runs relative to a headgear / hair mesh, by length: rays from
+    `centre` through the midpoint of every segment. `visible` = the ray misses the mesh, or the string
+    centre lies no more than `tol` under its outermost surface (the string still shows through / on
+    it). `run` = the part with y <= run_y_max (the run round the back and sides of the head);
+    `covered_run_visible_fraction` = visible share of the run where the mesh is over it at all.
+    With head = (verts, tris) and thin_below, also the length under a layer no thicker than
+    thin_below over the head along the same ray (such hair the string is meant to ride over).
+    With near, the length whose centre lies within +-near of the surface (z-fighting / flicker risk)."""
+    q = np.asarray(line, float)
+    mid, seg = 0.5 * (q[1:] + q[:-1]), np.linalg.norm(np.diff(q, axis=0), axis=1)
+    depth = shell_depth(mid, centre, gear_v, gear_t)
+    covered = np.isfinite(depth)
+    visible = ~covered | (depth >= -tol)
+    run = mid[:, 1] <= run_y_max
+
+    def frac(m, within=None):
+        w = np.ones(len(seg), bool) if within is None else within
+        return round(float(seg[m & w].sum() / max(float(seg[w].sum()), 1e-12)), 4)
+
+    out = {"length": round(float(seg.sum()), 3), "covered_fraction": frac(covered),
+           "visible_fraction": frac(visible), "poke_out_fraction": frac(covered & (depth > tol)),
+           "run_length": round(float(seg[run].sum()), 3), "run_visible_fraction": frac(visible, run),
+           "covered_run_length": round(float(seg[run & covered].sum()), 3),
+           "covered_run_visible_fraction": frac(visible, run & covered) if (run & covered).any() else None,
+           "deepest_under": round(float(-np.nanmin(depth)), 4) if covered.any() else None,
+           "max_poke": round(float(np.nanmax(depth)), 4) if covered.any() else None}
+    if near is not None:
+        out["near_surface_fraction"] = frac(covered & (np.abs(depth) <= near))
+    if head is not None and thin_below is not None:
+        c = np.asarray(centre, float)
+        dirs = (mid - c) / np.linalg.norm(mid - c, axis=1)[:, None]
+        head_r = np.array([h[-1] if len(h) else np.nan for h in ray_hits(np.repeat(c[None], len(mid), 0), dirs, *head)])
+        thick = np.linalg.norm(mid - c, axis=1) - depth - head_r
+        thin = covered & (thick <= thin_below)
+        out["thin_layer_length"] = round(float(seg[thin].sum()), 3)
+        out["buried_under_thin_layer_length"] = round(float(seg[thin & ~visible].sum()), 4)
+    return out
 
 
 def twine_inside_slab(mesh: MaskMesh, bend: Bend, loop) -> dict:

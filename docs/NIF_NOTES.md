@@ -50,9 +50,13 @@ tilted by ~0.6 deg (row 0 = +0.99994 +0.01060 -0.00117).
 * Reference heads (all vanilla, from PyNifly's test assets at the pinned commit bcb723a, each checked
   against its sha256): malehead.nif (human), maleheadargonian.nif and
   `meshes/actors/character/character assets/maleheadkhajiit.nif` (beast; skinned to skeletonbeast.nif,
-  all bones agree to 1.8e-5, and unlike the Argonian file its global-to-skin is correct). The Khajiit
-  head is not yet in tools/setup.sh's sparse checkout, so a byte-identical copy is vendored in
-  `tests/fixtures/vanilla/` (cfm.fit.reference_path prefers third_party when present).
+  all bones agree to 1.8e-5, and unlike the Argonian file its global-to-skin is correct). Every
+  reference file is listed in PyNifly's sparse checkout (`PYNIFLY_SPARSE` in
+  `tools/nifly/build_niflydll.py`, which now also lists the Khajiit head, `maleorchair27.nif` and
+  `meshes/draugr lich01 hood.nif`). Those three also keep byte-identical, sha-pinned copies in
+  `tests/fixtures/vanilla/` (`provenance.json`): `build_niflydll.py` leaves a checkout that is already
+  at the pinned commit alone, so a checkout made before they joined the list never gets them, and
+  `cfm.fit.reference_path` falls back to the copies. They can go once `fetch()` re-applies the list.
 * One beast mesh serves both races (ARMA FaceMaskAA_Beast), so the beast variants use a combined
   anchor (cfm.fit.kind_anchor): the back face clears the most forward snout (Argonian, y 13.84; the
   Khajiit nose is at y 12.08, so for Khajiit the gap is 3.56 instead of forward_offset 1.8); eye
@@ -120,16 +124,16 @@ tilted by ~0.6 deg (row 0 = +0.99994 +0.01060 -0.00117).
 | 5 | NiSkinPartition | 127366 | 1 partition(s), vertex data copied from the shape (SSE) |
 | 6 | BSLightingShaderProperty | 100 | type 0, SF1 0x82400303 (SPECULAR, SKINNED, RECEIVE_SHADOWS, CAST_SHADOWS, OWN_EMIT, REMAPPABLE_TEXTURES, ZBUFFER_TEST), SF2 0x8001 (ZBUFFER_WRITE, ENVMAP_LIGHT_FADE), gloss 30.0, spec 0.6 [1.0, 1.0, 1.0], emissive [0.0, 0.0, 0.0] x1.0, env scale 1.0, clamp 3, alpha 1.0 |
 | 7 | BSShaderTextureSet | 114 | [0] textures\CardboardFaceMask\mask_d.dds; [1] textures\CardboardFaceMask\mask_n.dds |
-| 8 | BSTriShape | 120 | "Twine" 819 verts / 1152 tris, flags 14, vertex attrs VERTEX+UV+NORMAL+TANGENT+SKINNED, bound sphere (-0.209, 2.586, 123.353) r 10.180; transform t=(0.0000, 0.0000, 0.0000) R=[+1.0000 +0.0000 +0.0000 +0.0000 +1.0000 +0.0000 +0.0000 +0.0000 +1.0000] |
+| 8 | BSTriShape | 120 | "Twine" 784 verts / 1068 tris, flags 14, vertex attrs VERTEX+UV+NORMAL+TANGENT+SKINNED, bound sphere (-0.193, 1.237, 123.578) r 11.189; transform t=(0.0000, 0.0000, 0.0000) R=[+1.0000 +0.0000 +0.0000 +0.0000 +1.0000 +0.0000 +0.0000 +0.0000 +1.0000] |
 | 9 | BSDismemberSkinInstance | 28 | data #10, partition #11, root #0, bones [1], partitions [(257, 55)] (flags, body part) |
-| 10 | NiSkinData | 5041 | global-to-skin t=(0.0000, 0.0000, 0.0000) R=[+1.0000 +0.0000 +0.0000 +0.0000 +1.0000 +0.0000 +0.0000 +0.0000 +1.0000]; bone 0: skin-to-bone t=(-0.1582, 1.6605, -120.3420) R=[+0.9999 -0.0106 +0.0012 +0.0106 +0.9999 -0.0009 -0.0012 +0.0010 +1.0000], sphere (-0.249, 4.128, 3.013, 10.180), 819 weights (min 1.000) |
-| 11 | NiSkinPartition | 64648 | 1 partition(s), vertex data copied from the shape (SSE) |
+| 10 | NiSkinData | 4831 | global-to-skin t=(0.0000, 0.0000, 0.0000) R=[+1.0000 +0.0000 +0.0000 +0.0000 +1.0000 +0.0000 +0.0000 +0.0000 +1.0000]; bone 0: skin-to-bone t=(-0.1582, 1.6605, -120.3420) R=[+0.9999 -0.0106 +0.0012 +0.0106 +0.9999 -0.0009 -0.0012 +0.0010 +1.0000], sphere (-0.219, 2.779, 3.238, 11.189), 784 weights (min 1.000) |
+| 11 | NiSkinPartition | 61470 | 1 partition(s), vertex data copied from the shape (SSE) |
 | 12 | BSLightingShaderProperty | 100 | type 0, SF1 0x82400303 (SPECULAR, SKINNED, RECEIVE_SHADOWS, CAST_SHADOWS, OWN_EMIT, REMAPPABLE_TEXTURES, ZBUFFER_TEST), SF2 0x8001 (ZBUFFER_WRITE, ENVMAP_LIGHT_FADE), gloss 12.0, spec 0.3 [1.0, 1.0, 1.0], emissive [0.0, 0.0, 0.0] x1.0, env scale 1.0, clamp 3, alpha 1.0 |
 | 13 | BSShaderTextureSet | 116 | [0] textures\CardboardFaceMask\twine_d.dds; [1] textures\CardboardFaceMask\twine_n.dds |
 
 The other three files have the identical 14-block layout; only vertex positions / counts differ
-(`CardboardMask` 1596 verts / 2364 tris for human, 1600 / 2368 for beast; `Twine` 819-980 verts /
-1152-1392 tris) and the bind is read from their own skeleton (same values).
+(`CardboardMask` 1596 verts / 2364 tris for human, 1600 / 2368 for beast; `Twine` 784 verts /
+1068 tris for human, 819 / 1116 for beast) and the bind is read from their own skeleton (same values).
 
 ## 6. Differences, block by block
 
@@ -151,37 +155,114 @@ The other three files have the identical 14-block layout; only vertex positions 
 | BSShaderTextureSet | [0] diffuse, [1] normal, [4] cube map, [5] env mask | [0] `textures\CardboardFaceMask\mask_d.dds` / `twine_d.dds`, [1] `..._n.dds` | no environment map, so slots 4/5 stay empty; 9 slots in both |
 | NiAlphaProperty | on the tail | none | opaque mask (see block list) |
 
-## 7. Twine and headgear
+## 7. Twine: a cheap party-mask string over the hair
 
-The mask is slot 55 so it can be worn together with helmets and hoods, so the string must not show
-through them. Measured on helmet-SMP.nif (rays from the head centre, eye height): its outer shell is
-~0.35-0.5 units outside the ears, ~0.55-0.85 outside the temples and 0.9-1.6 behind the head; the
-face-opening rim is at y ~ 5. A string held 1.5 units off the scalp therefore pokes out all round
-the back (538 of 539 covered twine vertices outside in the previous build).
+The brief: a thin tube from each cheek edge, round the back of the skull on a sagging, slightly
+off-centre path, one side riding higher than the other, crossing *over* the hair. Round 1 hugged
+the bald scalp at 0.15 units so helmets hid it; on real NPCs, whose hair meshes stand off the scalp,
+that string was buried and the gag lost. Decision for round 2: visibility over hair wins; poking out
+of close-fitting helmets and hoods is accepted.
 
-`cfm/geom_twine.py` now rests the string on the head: at every height, the convex hull of the bald
-head(s) within +-0.3 units of that height, behind y = eye-pit y + 1 (the outer orbital rim), grown by
-0.15 (gap) + the string radius. In front of the rim the string runs straight to the mask; behind it,
-it lies along the temple, over the ear and round the back (sagging 1.5 and lopsided +-0.35 as
-configured). For the beast mesh the hull is the union of the Argonian and Khajiit heads.
+**Path** (`cfm/geom_twine.py`, `string_path`; numbers for human_m with the default config):
+* Ends on the kraft back under the tape strips, at +-`string_asymmetry` x 1.0 about the eye line
+  (+X, the actor's right, higher: z 124.40 / 123.70), run toward the mask edge and lift off.
+* Straight taut span from the lift point to its tangent point on the clearance surface. The side
+  heights are +-`string_asymmetry` x 3.0 about the eye line. For humans the contacts sit over the
+  ears, and both are raised until the built tube (its centre-line segments sampled every 0.02, after
+  smoothing and resampling) clears the ear top (SBP_143_EARS partition, z 124.64) by
+  `EAR_TOP_GAP` = 1.0 along the ears' whole front-to-back extent (y -0.25..1.95): contacts at
+  z **128.01 (+X) and 125.91 (-X)**, a 2.1-unit (3 cm) lopsided difference; measured gaps 1.00 (-X)
+  and 2.65 (+X). 1.0 rather than a hair's breadth because elf and orc ears are pointed race morphs of
+  this head (not available here). The higher side never rides above crown - 3.5 (`CROWN_MARGIN`,
+  human z 128.35): a larger `string_asymmetry` saturates at a 2.4-unit difference instead of turning
+  the string into a headband (`high_side_capped` in the report). The beast anchor has no ears beside
+  the head (Argonian: no ear partition; Khajiit ears sit on top, z 126.7-135.2, and the string passes
+  under them), so its contacts are simply eye line +-1.05 (126.58 / 124.48).
+* Wrap round the back on the clearance surface, drooping `string_sag` x 7.0 = 4.2 below the mean
+  contact height with a cosine ease (level at the contacts and at the bottom). The lowest point is
+  `string_asymmetry` x 30 deg = 10.5 deg off straight back toward the lower side: human at
+  (-1.98, -9.41, **122.77**), under the occipital bump; beast at (-1.83, -6.84, 121.34). With a
+  small sag (sag x 7 below half the side difference) the wrap simply runs downhill to the lower
+  contact; `back_drop` and `low_point` are measured on the wrapped part only.
+* The whole centre line is smoothed with a 0.5-unit Gaussian along its length (rounds the bend over
+  the ear and the corner at the mask edge), then resampled adaptively for the tube.
 
-Gates in 03_mesh.py, re-checked on the exported files by tests/test_nif.py:
-* no twine vertex inside or closer than 0.1 to any reference head of the kind (human: 0.156; beast:
-  Argonian 0.199, Khajiit 0.143);
-* no halo: behind the head centre, the median distance to the nearest head is 0.27 and the max
-  <= 0.81 (bridges behind the ears) for every variant (limits 0.5 / 1.2; the same path with the old
-  1.5-unit clearance gives 1.59 / 2.00 and fails);
-* human variants: 0 of ~490 twine vertices in directions helmet-SMP covers lie outside its outer
-  shell (closest 0.064 inside, at the ear). See `docs/renders/fit_twine_helmet.png`: with the helmet
-  on, no string is visible from the back or side. The beast heads poke through this human helmet
-  themselves, so for them the check is reported, not gated. Beast-specific helmets are not available.
-* Hair is not modelled: on NPCs with hair the string disappears into the hair at the back, as a real
-  string pressed into hair would.
+**Clearance surface** (`ClearanceProfile`): at every height, the convex hull of the bald head(s)
+within +-0.3 units, behind the outer orbital rim, grown by the clearance + the string radius:
+* sides and ears: c_side = `string_clearance_units` (default 1.0) x `CLEARANCE_FACTOR[kind]`
+  (human 1.0, beast 0.7);
+* back: swelling smoothly (cos^2 over +-70 deg of straight back, then the convex hull again, so it
+  stays a taut convex loop) to c_back = c_side x (1 + `BACK_EXTRA[kind]`) = **2.5** for humans
+  (beast: no swell). Hair hangs thickest over the back of the head, which is exactly where the droop
+  has to show over it;
+* in front of the head centre (y > 1.26 human) a smoothstep down to the 0.15-unit minimum gap +
+  radius at the orbital rim (y 6.11). The contacts (angles -12.3 deg / -177.8 deg) lie behind the
+  centre, so the taper only shapes where a span may touch the temples.
+
+On a bald head the string therefore stands up to 2.6 units (3.7 cm) off the back of the skull: a
+stiff, egg-shaped loop rather than an elastic hugging the scalp. That is the price of one static
+mesh serving every hair style (render_human_m.png, side and top views).
+
+Beast: the mesh must clear both heads, and the Khajiit head is 0.8-1.6 units bigger than the
+Argonian across the back at the string's height, so over the union the string already floats that
+much higher on Argonians. The beast clearance is 0.7 x c over the union (Khajiit at the back) so
+that on each head it stays within the human limits.
+
+Measured on the exported files (behind the head centre; distance of twine vertices to the head,
+min/p10/median/p90/max; d / design = distance over the design clearance at that angle; excess =
+distance minus the human-scale clearance c (1 + BACK_EXTRA x back weight)):
+
+| variant / head | distance | d / design | excess over c |
+|---|---|---|---|
+| human_m / human | 0.98 / 1.06 / 1.73 / 2.50 / 2.61 | 0.98 / 1.00 / 1.03 / 1.10 / 1.17 | -0.03 .. median 0.04 .. max 0.17 |
+| beast_m / Argonian | 0.63 / 0.76 / 1.23 / 2.20 / 2.42 | (nearest head) 0.89 / 1.02 / 1.20 / 1.70 / 2.93 | -0.37 .. median 0.23 .. max 1.42 |
+| beast_m / Khajiit | 0.67 / 0.74 / 0.98 / 1.85 / 2.20 | | -0.33 .. median -0.02 .. max 1.20 |
+
+**Gates** (03_mesh.py, re-checked on the NIFs by tests/test_nif.py): no twine vertex inside or
+within 0.1 of a reference head (human 0.95; Argonian 0.63, Khajiit 0.67); d / design p10 >= 0.7 and
+median >= 0.85 on the nearest head; on EACH head excess median <= 0.5 and max <= 1.5 (no halo, no
+lasso; a real NPC wears one head); a typical-hair shell: along the whole run round the back and sides
+the string surface stays 0.8 x c_side over the nearest bald head (human min 0.98 over a 0.8 shell;
+beast 0.60 over 0.56); human: the string surface passes >= 0.9 above the ear tops (design 1.0;
+measured 1.00 / 2.65, closest to an ear vertex 1.34); side heights and droop as configured, lowest
+point at the back and off-centre; the hair gate below. `test_twine_builds_at_config_extremes`
+builds human_m and beast_m at `string_sag` and `string_asymmetry` in {0, 1} (no head or cardboard
+intersection, ear gap, crown cap, droop).
+
+**Headgear and hair** (rays from the head centre (0, 1.26, 124.05) through every segment midpoint
+of the twine centre line, by length; `mesh_report.json` "headgear", `docs/renders/fit_twine_headgear.png`
+draws the length under each surface in red; human_m):
+
+| reference (human skeleton) | covered | visible | where it covers the back/side run: visible | pokes out | notes |
+|---|---|---|---|---|---|
+| `maleorchair27.nif` MaleOrcHair27 (PyNifly test asset: hair BSDynamicTriShape skinned to NPC Head [Head], `textures\actors\character\hair\HairDreads2.dds`) - **gated** | 16 % (8.4 units of the run) | 96 % | **77 %** | 12 % (max 1.34) | a dreadlock mohawk: no hair at the sides, dreads hanging 2-2.5 units off the back of the scalp at the string's height (3.8-4.1 above z 126; made for the orc head, 17 % of it lies inside the human head). The string crosses over the dread strip; single dreads that stick out 3-3.5 units cross over it in turn (deepest 1.0 under the outer surface). Round 1 of this design (uniform 1.0 clearance) showed 27 % there. Gate: >= 70 % of that covered length visible and no length under hair thinner than c_side - radius; gated while `string_clearance_units` >= 1.0 (smaller values deliberately tuck the string under hair) |
+| `helmet-SMP.nif` (vanilla-style helmet) - informational | 77 % | 88 % | 85 % | 60 % (max 1.25) | 20 % of the length runs within 2 radii of the helmet surface |
+| `meshes/draugr lich01 hood.nif` (cloth hood, `textures\_00\...`, PyNifly test asset) - informational | 99 % | 90 % | 89 % | 87 % (max 2.58) | 15 % within 2 radii of the surface |
+
+`visible` = outside the mesh or within one string radius (hair) / 0.02 (helmet, hood) of its outer
+surface. The beast variants are reported against the same human references (informational; the
+beast heads poke through them themselves).
+
+**Expected look with headgear** (accepted; in-game checks in docs/TESTING.md): the string is not
+cleanly on top of a helmet or hood - it weaves in and out of the surface, showing over most of the
+back and sides and dipping under it in places (red dashes in fit_twine_headgear.png). Where it runs
+within a couple of radii of the surface (helmet 20 %, hood 15 % of its length) it may flicker
+(z-fighting). On most guards and hooded NPCs the twine will be seen piercing the headgear.
+
+Riding over every dread (`03_mesh.TWINE_OVER_HAIR = ("hair",)`, off by default, tested by
+`test_twine_over_hair_alternative`) adds the hair to the clearance hull: 100 % visible over
+MaleOrcHair27, but it builds a tent over the mohawk that stands up to 3.8 units off a bald head and
+2.3 out of helmet-SMP.nif. The back swell is the compromise: it clears the dread strip where the
+string crosses it (2-2.5 units) and stays a smooth convex loop on every other head.
 
 `CitrusFemHead.nif` (PyNifly test asset) is not a human female head: its textures are
 `actors\character\cheetahfemale\...` and it has the Khajiit muzzle topology (half-width 8.472 like
-maleheadkhajiit.nif). It is only an informational beast_f reference: the mask clears it by 3.0 and
-the twine by 0.03 (temple), with no vertex inside.
+maleheadkhajiit.nif). It is only an informational beast_f reference (`mesh_report.json`
+"extra_reference_clearance"), with no vertex inside.
+
+Renders: `docs/renders/render_human_m.png` (bald vanilla head), `render_human_m_hair.png` (the same
+with MaleOrcHair27 drawn as a matte overlay, `src/render_check.py --extra-nif`), `render_beast_m.png`,
+`render_human_m_pose.png` (`--pose 35,15,0`), `fit_mask_*.png`, `fit_twine_headgear.png`.
 
 ## 8. Ground model
 
@@ -208,11 +289,15 @@ values, vertex attributes incl. tangents, global-to-skin = I and skin-to-bone = 
 readers, model-space positions = authored within 1e-3, per-bone bound spheres, rigid motion under a
 30 deg head-bone rotation about three axes, triangle budget (<= 4000), winding vs normals, unit
 normals, clearance against every reference head of the kind (human; Argonian and Khajiit for beast:
-no vertex inside; mask >= 0.5, twine >= 0.1 units away), the twine hugging the back of the head, the
-twine under helmet-SMP's shell (human), UVs inside their atlas regions, twine UVs read back within
+no vertex inside; mask >= 0.5, twine >= 0.1 units away), the twine riding `string_clearance_units`
+over the back of the head (back swell for humans) without a halo or lasso on any head of the kind,
+the typical-hair shell, its side heights / crown cap / droop / off-centre low point, the string
+passing EAR_TOP_GAP above the human ear tops (densely sampled), its visibility where MaleOrcHair27
+covers it (human), the informational helmet / hood report, the over-hair alternative, the twine at
+the string_sag / string_asymmetry extremes, UVs inside their atlas regions, twine UVs read back within
 0.005 (u restarts every 4 tiles, so half floats stay exact) with seamless restarts, the
 photo-to-model mapping of the front print against the kind's anchor, the combined beast anchor, the
-pinned sha256 of every reference NIF, the manifest, the fit proof, the synthetic-fixture build with
+pinned sha256 of every reference NIF (and the fixture fallback for an older checkout), the manifest, the fit proof, the synthetic-fixture build with
 reversed polygon order, that `03 --out-dir` / `04 --mesh-dir --out-dir` builds leave work/ and
 docs/ untouched, and that PyNifly's own Blender importer reads the file back (meshes, "NPC Head"
 vertex group, bone at the bind).

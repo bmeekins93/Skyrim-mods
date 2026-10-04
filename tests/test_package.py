@@ -1,5 +1,6 @@
-"""Tests for src/07_package.py (SPID ini generator, build-input gate, package validator, zip),
-src/build_all.py (outline check wiring) and the .claude/hooks/block_game_data.{sh,py} safety hook.
+"""Tests for src/07_package.py (SPID ini generator incl. the KEF keyword line, build-input gate,
+package validator, zip), src/build_all.py (outline and config checks) and the
+.claude/hooks/block_game_data.{sh,py} safety hook.
 
 The validator tests run against dist/CardboardFaceMask when it exists (skipped otherwise); the
 negative tests break a temporary copy of it and expect the validator to fail loudly. The
@@ -45,16 +46,91 @@ BASE_CFG = {"plugin_name": "CardboardFaceMask.esp", "exclude_children": True, "c
 
 # --------------------------------------------------------------------------- DISTR ini generator
 
-def test_contract_line_matches_claude_md():
-    """CLAUDE.md fixes the primary line; the generator must reproduce it for the default config."""
-    line = pkg.distribution_line(BASE_CFG)
-    assert line == "Item = 0x800~CardboardFaceMask.esp|ActorTypeNPC|NONE|NONE|-C|1|100"
-    assert line in (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+KEYWORD = "KEFEquip_0x800_CardboardFaceMask_esp"
+ITEM_LINE = "Item = 0x800~CardboardFaceMask.esp|ActorTypeNPC|NONE|NONE|-C|1|100"
+KEYWORD_LINE = f"Keyword = {KEYWORD}|ActorTypeNPC|NONE|NONE|-C|NONE|100"
+
+
+def test_contract_lines_match_claude_md():
+    """CLAUDE.md fixes both lines; the generator must reproduce them for the default config
+    (equip_method defaults to kef when the key is missing)."""
+    claude_md = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+    for cfg in (BASE_CFG, dict(BASE_CFG, equip_method="kef")):
+        assert pkg.distribution_lines(cfg) == [ITEM_LINE, KEYWORD_LINE]
+    assert ITEM_LINE in claude_md and KEYWORD_LINE in claude_md
+
+
+def test_engine_mode_writes_item_line_only():
+    cfg = dict(BASE_CFG, equip_method="engine")
+    assert pkg.distribution_lines(cfg) == [ITEM_LINE]
+    text = pkg.make_distr_ini(cfg)
+    assert pkg.parse_distr_ini(text) == [("Item", ITEM_LINE.split(" = ", 1)[1])]
+    assert "SPID never equips items" in text and "rebuild with equip_method: kef" in text
+    assert "KEFEquip_0x800" not in text      # no Keyword line, not even in the examples
 
 
 def test_line_follows_config():
     cfg = dict(BASE_CFG, exclude_children=False, chance_percent=12.5, plugin_name="Other.esp")
-    assert pkg.distribution_line(cfg) == "Item = 0x800~Other.esp|ActorTypeNPC|NONE|NONE|NONE|1|12.5!"
+    assert pkg.distribution_lines(dict(cfg, equip_method="engine")) == [
+        "Item = 0x800~Other.esp|ActorTypeNPC|NONE|NONE|NONE|1|12.5!"]
+    assert pkg.distribution_lines(cfg) == [
+        "Item = 0x800~Other.esp|KEFEquip_0x800_Other_esp|NONE|NONE|NONE|1|100",
+        "Keyword = KEFEquip_0x800_Other_esp|ActorTypeNPC|NONE|NONE|NONE|NONE|12.5!"]
+
+
+@pytest.mark.parametrize("value", ["KEF", "Kef", "spid", "", None, 1, True])
+def test_equip_method_rejects(value):
+    with pytest.raises(pkg.PackageError, match="equip_method must be one of kef, engine"):
+        pkg.make_distr_ini(dict(BASE_CFG, equip_method=value))
+
+
+@pytest.mark.parametrize("plugin,keyword", [("CardboardFaceMask.esp", KEYWORD),
+                                            ("Mask2.esm", "KEFEquip_0x800_Mask2_esm"),
+                                            ("Mask.esl", "KEFEquip_0x800_Mask_esl"),
+                                            ("Kad_AkaviriHats.esp", "KEFEquip_0x800_Kad_AkaviriHats_esp"),
+                                            ("Cardboard_Face_Mask.esp",
+                                             "KEFEquip_0x800_Cardboard_Face_Mask_esp")])
+def test_kef_keyword_name(plugin, keyword):
+    """KEFEquip_0x[FORMID]_[MODNAME]_[EXTENSION]; KEF's published examples are 0x800 in an .esp and
+    0x803 in Kad_AkaviriHats.esp (an '_' inside the plugin name)."""
+    assert pkg.kef_keyword(plugin) == keyword
+    assert pkg.spid_record_kind(keyword) == "editorid"
+    assert pkg.spid_record_kind(keyword + pkg.KEF_FORCE_SUFFIX) == "editorid"
+
+
+@pytest.mark.parametrize("plugin", ["Cardboard Face Mask.esp", "Cardboard.Face.esp", "_Mask.esp",
+                                    "Mask_.esp", "Mask__X.esp", "Mask_esp.esp", "Mask_ESM.esp",
+                                    "Mask_forceEquip.esp", "Mask.ESP", "Mask.txt", "Mask"])
+def test_kef_keyword_rejects_unverified_plugin_names(plugin):
+    with pytest.raises(pkg.PackageError):
+        pkg.kef_keyword(plugin)
+    with pytest.raises(pkg.PackageError):
+        pkg.make_distr_ini(dict(BASE_CFG, plugin_name=plugin))
+    if plugin.endswith(".esp"):   # engine mode writes no keyword, so these names work there
+        assert len(pkg.distribution_lines(dict(BASE_CFG, plugin_name=plugin, equip_method="engine"))) == 1
+
+
+def test_kef_keyword_reads_as_editor_id_in_spid():
+    """SPID must take the keyword for an EditorID (and create it), never for a FormID or plugin,
+    and its sanitizer must leave it alone (it strips '0x00' leading zeros without a word boundary)."""
+    assert pkg.spid_record_kind(KEYWORD) == "editorid"
+    assert pkg.spid_record_kind("0x800~CardboardFaceMask.esp") == "formid~plugin"
+    assert pkg.spid_record_kind("0x800") == "formid"
+    assert pkg.spid_record_kind("KEFEquip_0x800_Mask.esp") == "plugin"   # why KEF writes _esp
+    assert pkg.spid_sanitize("KEFEquip_0x00800_Mask_esp") == "KEFEquip_0x800_Mask_esp"
+
+
+@pytest.mark.parametrize("raw,sanitized", [
+    ("0x800~X.esp | A , B", "0x800~X.esp|A,B"),
+    ("0x00800~X.esp", "0x800~X.esp"),
+    ("00012345", "0x12345"),
+    ("0x800 - X.esp|A", "0x800~X.esp|A"),
+    (ITEM_LINE.split(" = ", 1)[1], ITEM_LINE.split(" = ", 1)[1]),
+    (KEYWORD_LINE.split(" = ", 1)[1], KEYWORD_LINE.split(" = ", 1)[1]),
+])
+def test_spid_sanitize_mirrors_spid(raw, sanitized):
+    """LookupConfigs.cpp:13-53; a changed value makes SPID rewrite the ini file."""
+    assert pkg.spid_sanitize(raw) == sanitized
 
 
 @pytest.mark.parametrize("value,text", [(100, "100"), (100.0, "100"), (50, "50"), (0.01, "0.01"),
@@ -69,21 +145,62 @@ def test_format_chance_rejects(value):
         pkg.format_chance(value)
 
 
+@pytest.mark.parametrize("method", ["kef", "engine"])
+@pytest.mark.parametrize("value", [0, -5, 100.5, "abc", None, float("nan"), 1e-9])
+def test_bad_chance_rejected_in_both_modes(value, method, monkeypatch):
+    """The generator, and build_all's early config check that runs it, refuse a bad chance in
+    either equip mode."""
+    cfg = dict(BASE_CFG, chance_percent=value, equip_method=method)
+    with pytest.raises(pkg.PackageError, match="chance_percent"):
+        pkg.make_distr_ini(cfg)
+    monkeypatch.setattr(build_all, "package_module", lambda: _StubConfigPackage(cfg))
+    with pytest.raises(build_all.BuildError, match="config.yaml: chance_percent"):
+        build_all.check_package_config([s for s in build_all.STAGES if s.name == "package"])
+
+
 @pytest.mark.parametrize("value,field", [(100, "100"), (25, "25!"), (99.9, "99.9!"), (0.5, "0.5!")])
 def test_chance_below_100_is_deterministic(value, field):
     """SPID re-rolls a plain chance on every launch; '!' fixes it per NPC and character."""
     assert pkg.chance_field(value) == field
-    assert pkg.distribution_line(dict(BASE_CFG, chance_percent=value)).endswith("|" + field)
+    cfg = dict(BASE_CFG, chance_percent=value)
+    assert pkg.distribution_lines(dict(cfg, equip_method="engine"))[0].endswith("|" + field)
+    item, keyword = pkg.distribution_lines(cfg)
+    assert keyword.endswith("|" + field)
+    if field == "100":
+        assert item == ITEM_LINE
+    else:   # the Item line follows the keyword instead of rolling a second, independent chance
+        assert item == f"Item = 0x800~CardboardFaceMask.esp|{KEYWORD}|NONE|NONE|-C|1|100"
 
 
-def test_ini_structure_as_spid_reads_it():
-    """One active Item entry, 7 '|' sections, no [sections], ASCII, comments on their own lines."""
-    text = pkg.make_distr_ini(BASE_CFG)
+@pytest.mark.parametrize("cfg", [BASE_CFG, dict(BASE_CFG, chance_percent=25),
+                                 dict(BASE_CFG, exclude_children=False)])
+def test_generated_lines_pair_up(cfg):
+    """The validator's pairing rule accepts what the generator writes."""
+    item, keyword = (line.split(" = ", 1)[1].split("|") for line in pkg.distribution_lines(cfg))
+    assert pkg.pairing_problems(item, keyword, KEYWORD) == []
+
+
+def test_pairing_rejects_independent_rolls():
+    item = ITEM_LINE.split(" = ", 1)[1].split("|")
+    keyword = KEYWORD_LINE.split(" = ", 1)[1].split("|")
+    assert pkg.pairing_problems(item[:6] + ["25!"], keyword[:6] + ["25!"], KEYWORD)
+    assert pkg.pairing_problems(item, keyword[:4] + ["NONE"] + keyword[5:], KEYWORD)   # traits
+    assert pkg.pairing_problems(item[:1] + ["ActorTypeNPC,-Nazeem"] + item[2:], keyword, KEYWORD)
+
+
+@pytest.mark.parametrize("method", ["kef", "engine"])
+def test_ini_structure_as_spid_reads_it(method):
+    """Item (+ Keyword) entries with 7 '|' sections, no [sections], ASCII, comments on their own
+    lines, nothing SPID's sanitizer would rewrite."""
+    cfg = dict(BASE_CFG, equip_method=method)
+    text = pkg.make_distr_ini(cfg)
     text.encode("ascii")
     entries = pkg.parse_distr_ini(text)
-    assert entries == [("Item", "0x800~CardboardFaceMask.esp|ActorTypeNPC|NONE|NONE|-C|1|100")]
-    sections = entries[0][1].split("|")
-    assert len(sections) == pkg.SPID_SECTIONS
+    assert [f"{k} = {v}" for k, v in entries] == pkg.distribution_lines(cfg)
+    assert [k for k, _ in entries] == (["Item", "Keyword"] if method == "kef" else ["Item"])
+    for _, value in entries:
+        assert len(value.split("|")) == pkg.SPID_SECTIONS
+        assert pkg.spid_sanitize(value) == value
     assert not any(line.lstrip().startswith("[") for line in text.splitlines())
     # SimpleIni has no inline comments: an active line must not carry a ';'
     for line in text.splitlines():
@@ -91,17 +208,37 @@ def test_ini_structure_as_spid_reads_it():
             assert ";" not in line and "#" not in line
 
 
-def test_ini_examples_are_valid_entries():
-    """Each commented example, uncommented, parses as a 7-section Item line for our ARMO."""
-    examples = [line.split("Item = ", 1)[1] for line in pkg.make_distr_ini(BASE_CFG).splitlines()
-                if line.startswith(";") and "Item = 0x" in line]
-    assert len(examples) == 3
-    for value in examples:
+def test_ini_header_explains_kef():
+    """kef mode: the header says what each line does and that KEF is needed for the keyword."""
+    text = pkg.make_distr_ini(BASE_CFG)
+    header = "\n".join(line for line in text.splitlines() if line.startswith(";"))
+    assert pkg.KEF_URL in header and "Keyword Equip Framework" in header
+    assert "never equips" in header and "does nothing by itself" in header
+    assert "Without KEF the keyword is harmless" in header
+    # what KEF's page says about adding the item and occupied slots, and the force suffix
+    assert "TWO" in header and "slot (55)" in header
+    assert KEYWORD + pkg.KEF_FORCE_SUFFIX in header and "not tested here" in header
+
+
+@pytest.mark.parametrize("method", ["kef", "engine"])
+def test_ini_examples_are_valid_entries(method):
+    """Each commented example, uncommented, parses as a 7-section line for our ARMO / keyword;
+    in kef mode the examples come in Item + Keyword pairs that select the same NPCs."""
+    text = pkg.make_distr_ini(dict(BASE_CFG, equip_method=method))
+    examples = [line.lstrip("; ").split(" = ", 1) for line in text.splitlines()
+                if line.startswith(";") and re.match(r";\s+(Item|Keyword) = (0x|KEF)", line)]
+    items = [v for k, v in examples if k == "Item"]
+    keywords = [v for k, v in examples if k == "Keyword"]
+    assert len(items) == 3 and len(keywords) == (3 if method == "kef" else 0)
+    for value in items + keywords:
         sections = value.split("|")
         assert len(sections) == 7
-        assert sections[0] == "0x800~CardboardFaceMask.esp"
-        assert value == re.sub(r"\s*([|,])\s*", r"\1", value)  # nothing SPID's sanitizer rewrites
-    assert examples[-1].endswith("|25!")
+        assert pkg.spid_sanitize(value) == value
+    assert all(v.startswith("0x800~CardboardFaceMask.esp|") for v in items)
+    assert all(v.startswith(KEYWORD + "|") for v in keywords)
+    for item, keyword in zip(items, keywords):
+        assert pkg.pairing_problems(item.split("|"), keyword.split("|"), KEYWORD) == []
+    assert (keywords or items)[-1].endswith("|25!")
 
 
 def test_ini_name_has_spid_suffix():
@@ -133,6 +270,13 @@ def test_readme_config_table_matches_config_yaml(config):
             documented.update({k: yaml.safe_load(v) for k, v in zip(keys, values)})
     assert set(documented) == set(config), set(config) ^ set(documented)
     assert documented == config
+    assert {"equip_method", "string_clearance_units"} <= set(documented)
+
+
+def test_readme_names_kef_requirement():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert pkg.KEF_URL in readme and "Keyword Equip Framework" in readme
+    assert pkg.distribution_lines(load_config())[-1].split(" = ", 1)[1] in readme
 
 
 # --------------------------------------------------------------------------- build-input gate
@@ -268,10 +412,39 @@ def test_build_all_checks_outline_when_segment_is_skipped(monkeypatch, names, ch
     build_all.check_outline(stages)
 
 
+class _StubConfigPackage:
+    """src/07_package.py with a substitute config.yaml."""
+    PackageError = pkg.PackageError
+    make_distr_ini = staticmethod(pkg.make_distr_ini)
+
+    def __init__(self, cfg):
+        self.cfg = cfg
+
+    def load_config(self):
+        return self.cfg
+
+
+@pytest.mark.parametrize("names,cfg,fails", [
+    (["mesh", "nif", "plugin", "package", "test"], dict(BASE_CFG, equip_method="KEF"), True),
+    (["package"], dict(BASE_CFG, plugin_name="Card Board.esp"), True),
+    (["package"], dict(BASE_CFG, equip_method="engine"), False),
+    (["mesh", "nif"], dict(BASE_CFG, equip_method="KEF"), False),     # package not selected
+])
+def test_build_all_checks_package_config_first(monkeypatch, names, cfg, fails):
+    monkeypatch.setattr(build_all, "package_module", lambda: _StubConfigPackage(cfg))
+    stages = [s for s in build_all.STAGES if s.name in names]
+    if fails:
+        with pytest.raises(build_all.BuildError, match="config.yaml: "):
+            build_all.check_package_config(stages)
+    else:
+        build_all.check_package_config(stages)
+
+
 def test_build_all_real_outline_check_runs():
     """The real check loads src/07_package.py and returns a list (contents depend on work/)."""
     module = build_all.package_module()
     assert isinstance(module.outline_problems(module.load_config()), list)
+    build_all.check_package_config(build_all.STAGES)    # the real config.yaml is accepted
 
 
 # --------------------------------------------------------------------------- package validator
@@ -295,7 +468,8 @@ def test_dist_package_is_valid(dist_dir, config):
     assert pkg.distr_ini_name(config["plugin_name"]) in paths
     assert any(p.startswith(f"meshes/{MOD_NAME}/") for p in paths)
     assert any(p.startswith(f"textures/{MOD_NAME}/") for p in paths)
-    assert report["distr_lines"] == [pkg.distribution_line(config)]
+    assert report["distr_lines"] == pkg.distribution_lines(config)
+    assert report["equip_method"] == config.get("equip_method", "kef")
 
 
 def test_dist_zip_matches_folder(dist_dir):
@@ -342,19 +516,30 @@ def test_detects_wrong_case_texture(broken_copy, config):
     _expect_failure(broken_copy, config, "twine_d.dds is not in the package (exact case)")
 
 
-def test_detects_texture_in_unflagged_slot(broken_copy, config):
-    """A path in slot 3 (glow) without the GLOW_MAP shader flag is invisible to pyn's
-    shape.textures; the validator reads all nine slots."""
+@pytest.mark.parametrize("name,index", [("Diffuse", 0), ("Glow", 2), ("Specular", 7), ("Wrinkles", 8)])
+def test_detects_texture_in_any_slot(broken_copy, config, name, index):
+    """BSShaderTextureSet has nine slots (0-8). pyn's shape.textures only shows the slots its shader
+    flags enable and never reads index 8; the validator reads every index directly, first to last."""
     from cfm.nifenv import NifFile
     path = sorted((broken_copy / "meshes" / MOD_NAME).glob("*.nif"))[0]
     nif = NifFile(str(path))
     shape = nif.shapes[0]
-    shape.set_texture("Glow", "textures\\CardboardFaceMask\\does_not_exist.dds")
+    shape.set_texture(name, "textures\\CardboardFaceMask\\does_not_exist.dds")   # pynifly.py:3585-3615
     nif.save()
-    reread = NifFile(str(path)).shapes[0]
-    assert "Glow" not in dict(reread.textures)        # the flag-based view misses it ...
-    _expect_failure(broken_copy, config, "slot 3: textures/CardboardFaceMask/does_not_exist.dds "
-                                         "is not in the package")   # ... the validator does not
+    refs = pkg.nif_texture_refs(path)
+    assert (shape.name, f"slot {index}", "textures\\CardboardFaceMask\\does_not_exist.dds") in refs
+    if name in ("Glow", "Wrinkles"):
+        assert "does_not_exist" not in str(dict(NifFile(str(path)).shapes[0].textures))   # pyn misses it
+    _expect_failure(broken_copy, config, f"slot {index}: textures/CardboardFaceMask/does_not_exist.dds "
+                                         "is not in the package")
+
+
+def test_texture_refs_cover_every_slot_index(dist_dir):
+    """The shipped meshes: every shape is read at indices 0..8 and uses only slots 0 and 1 (and
+    slot 7, specular, is empty: the specular mask lives in the normal map's alpha)."""
+    for nif in sorted((dist_dir / "meshes" / MOD_NAME).glob("*.nif")):
+        slots = {slot for _, slot, _ in pkg.nif_texture_refs(nif)}
+        assert slots and slots <= {"slot 0", "slot 1"}, (nif.name, slots)
 
 
 def test_detects_missing_mesh(broken_copy, config):
@@ -373,6 +558,46 @@ def test_detects_ini_for_other_plugin(broken_copy, config):
     ini = broken_copy / pkg.distr_ini_name(config["plugin_name"])
     ini.write_text(ini.read_text().replace("~CardboardFaceMask.esp|", "~Other.esp|"))
     _expect_failure(broken_copy, config, "entry targets 'Other.esp'")
+
+
+def _rewrite_ini(pkg_dir, config, old, new):
+    ini = pkg_dir / pkg.distr_ini_name(config["plugin_name"])
+    text = ini.read_text()
+    assert old in text
+    ini.write_text(text.replace(old, new))
+
+
+def test_detects_keyword_for_other_item(broken_copy, config):
+    if pkg.equip_method(config) != "kef":
+        pytest.skip("equip_method is not kef")
+    _rewrite_ini(broken_copy, config, "\nKeyword = KEFEquip_0x800_", "\nKeyword = KEFEquip_0x801_")
+    _expect_failure(broken_copy, config, "keyword 'KEFEquip_0x801_CardboardFaceMask_esp' is not")
+
+
+def test_detects_missing_keyword_line(broken_copy, config):
+    if pkg.equip_method(config) != "kef":
+        pytest.skip("equip_method is not kef")
+    _rewrite_ini(broken_copy, config, "\nKeyword = KEFEquip_", "\n; Keyword = KEFEquip_")
+    _expect_failure(broken_copy, config, "0 active 'Keyword = KEFEquip_0x800_CardboardFaceMask_esp|...' lines")
+
+
+def test_detects_unpaired_chance(broken_copy, config):
+    """Item at 100 % but Keyword at 25 %: masks KEF never equips on three NPCs in four."""
+    if pkg.equip_method(config) != "kef" or pkg.chance_field(config.get("chance_percent", 100)) != "100":
+        pytest.skip("needs equip_method kef at 100 %")
+    _rewrite_ini(broken_copy, config, "|-C|NONE|100\n", "|-C|NONE|25!\n")
+    _expect_failure(broken_copy, config, "the Item line must then use KEFEquip_0x800_CardboardFaceMask_esp")
+
+
+def test_detects_keyword_line_in_engine_mode(broken_copy, config):
+    if pkg.equip_method(config) != "kef":
+        pytest.skip("equip_method is not kef")
+    _expect_failure(broken_copy, dict(config, equip_method="engine"), "unexpected entries [('Keyword'")
+
+
+def test_detects_line_spid_would_rewrite(broken_copy, config):
+    _rewrite_ini(broken_copy, config, "\nItem = 0x800~", "\nItem = 0x00800~")
+    _expect_failure(broken_copy, config, "SPID would rewrite Item")
 
 
 def test_detects_ini_section(broken_copy, config):

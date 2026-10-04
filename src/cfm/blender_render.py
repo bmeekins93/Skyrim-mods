@@ -4,7 +4,8 @@ Runs inside Blender (src/render_check.py drives it and builds the contact sheet)
 
     blender -b --factory-startup -P src/cfm/blender_render.py -- \\
         --nif work/nif/mask_human_m.nif --head human --out-dir /tmp/x \\
-        [--pose 35,15,0] [--checker] [--views front,front34,left,back34,back,top,closeup]
+        [--pose 35,15,0] [--checker] [--views front,front34,left,back34,back,top,closeup] \\
+        [--extra-nif third_party/PyNifly/tests/tests/SkyrimSE/maleorchair27.nif]
 
 Writes <out-dir>/<view>.png for every view and <out-dir>/report.json.
 
@@ -154,7 +155,7 @@ def skeleton_for(nif_path: Path, choice: str) -> Path:
 class MeshData:
     name: str
     source: str
-    role: str                    # "nif" (the meshes under test) or "head"
+    role: str                    # "nif" (the meshes under test), "head" or "overlay" (--extra-nif)
     verts: np.ndarray            # (N, 3) model space
     normals: np.ndarray          # (N, 3) model space, unit
     tris: np.ndarray             # (M, 3)
@@ -734,15 +735,18 @@ def nif_material(mesh: MeshData, args) -> tuple:
     return mat, desc
 
 
-def head_material(color):
+def head_material(color, name="M_head_skin", roughness=0.62):
     bpy = _bpy()
-    mat = bpy.data.materials.new("M_head_skin")
+    mat = bpy.data.materials.new(name)
     mat.use_nodes = True
     bsdf = mat.node_tree.nodes["Principled BSDF"]
     bsdf.inputs["Base Color"].default_value = (*color, 1)
-    bsdf.inputs["Roughness"].default_value = 0.62
+    bsdf.inputs["Roughness"].default_value = roughness
     bsdf.inputs["Specular IOR Level"].default_value = 0.35
     return mat
+
+
+OVERLAY_COLOUR = (0.07, 0.045, 0.03)    # --extra-nif meshes: matte dark-brown "hair" (linear RGB)
 
 
 def make_object(mesh: MeshData, mat):
@@ -925,6 +929,9 @@ def place_rig(rig, centre, d, right, up, radius, exposure):
 def parse_args(argv):
     ap = argparse.ArgumentParser(prog="blender_render.py", description=__doc__.split("\n")[0])
     ap.add_argument("--nif", action="append", default=[], help="NIF under test (repeatable)")
+    ap.add_argument("--extra-nif", action="append", default=[],
+                    help="overlay NIF (e.g. a hair or hood), drawn matte dark brown and posed with the "
+                         "head; not part of the checks (repeatable)")
     ap.add_argument("--head", choices=["human", "beast", "female", "none"], default="human")
     ap.add_argument("--skeleton", choices=["auto", *SKELETON_FILES], default="auto",
                     help="reference skeleton for the --nif files (auto: from the file name)")
@@ -968,6 +975,9 @@ def load_all(args):
     if args.head != "none":
         head_nif, head_skel, _ = HEADS[args.head]
         head_meshes = load_nif_meshes(head_nif, skel(head_skel), "head")
+    for p in args.extra_nif:     # overlays ride with the head: drawn and posed like it, never checked
+        path = _abs(p)
+        head_meshes += load_nif_meshes(path, skel(skeleton_for(path, args.skeleton)), "overlay")
     if any(args.pose):
         first = HEADS[args.head][1] if args.head != "none" else skeleton_for(args.nif[0], args.skeleton)
         head_bind = skel(first).world[HEAD_BONE]
@@ -999,7 +1009,8 @@ def render_views(args, scene, nif_meshes, head_meshes):
     tan_half = 18.0 / args.lens
     every = np.concatenate([m.verts for m in nif_meshes + head_meshes])
     radius = float(np.linalg.norm(every.max(0) - every.min(0)) / 2)
-    head_y = 0.0 if not head_meshes else float(np.median(np.concatenate([m.verts for m in head_meshes])[:, 1]))
+    heads_only = [m for m in head_meshes if m.role == "head"]
+    head_y = 0.0 if not heads_only else float(np.median(np.concatenate([m.verts for m in heads_only])[:, 1]))
     out_dir = Path(args.out_dir)
     views = []
     for name in args.views:
@@ -1021,7 +1032,7 @@ def render_views(args, scene, nif_meshes, head_meshes):
 
 def main(argv):
     args = parse_args(argv)
-    shas = {_rel(_abs(p)): hashlib.sha1(_abs(p).read_bytes()).hexdigest() for p in args.nif}
+    shas = {_rel(_abs(p)): hashlib.sha1(_abs(p).read_bytes()).hexdigest() for p in args.nif + args.extra_nif}
     nif_meshes, head_meshes, binds = load_all(args)       # hashes taken just before loading
     if not nif_meshes and not head_meshes:
         raise SystemExit("nothing to render: give --nif and/or --head")
@@ -1035,12 +1046,16 @@ def main(argv):
         materials[m.name] = desc
         make_object(m, mat)
     if head_meshes:
-        skin = head_material(HEADS[args.head][2])
+        skin = head_material(HEADS[args.head][2]) if args.head != "none" else None
+        overlay = head_material(OVERLAY_COLOUR, "M_overlay", 0.8) if args.extra_nif else None
         for m in head_meshes:
-            make_object(m, skin)
+            make_object(m, skin if m.role == "head" else overlay)
+            if m.role == "overlay":
+                materials[m.name] = "matte dark brown (overlay, textures not shown)"
     views = render_views(args, scene, nif_meshes, head_meshes)
     report = {
         "nifs": [_rel(_abs(p)) for p in args.nif],
+        "extra_nifs": [_rel(_abs(p)) for p in args.extra_nif],
         "nif_sha1": shas,
         "head": args.head, "head_nif": _rel(HEADS[args.head][0]) if args.head != "none" else None,
         "pose_deg": dict(zip(("yaw", "pitch", "roll"), args.pose)),
@@ -1049,7 +1064,7 @@ def main(argv):
         "meshes": [{"name": m.name, "source": m.source, "role": m.role, **m.report,
                     "material": materials.get(m.name, "matte skin (head overlay)")}
                    for m in nif_meshes + head_meshes],
-        "clearance_to_head": clearance(nif_meshes, head_meshes),
+        "clearance_to_head": clearance(nif_meshes, [m for m in head_meshes if m.role == "head"]),
         "views": views,
         "blender": _bpy().app.version_string,
     }

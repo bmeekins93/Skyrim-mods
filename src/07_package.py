@@ -6,21 +6,25 @@ Inputs (docs/CONTRACTS.md):
   work/dds/*.dds              textures (src/05_dds.py)
   work/outline.json, work/atlas_layout.json, work/mesh/mesh_report.json, work/nif_manifest.json
                               build records, checked for consistency with config.yaml
-  config.yaml                 plugin_name, exclude_children, chance_percent, silhouette_mode, ...
+  config.yaml                 plugin_name, exclude_children, chance_percent, equip_method,
+                              silhouette_mode, ...
 Outputs:
   dist/CardboardFaceMask/     Data-folder layout: <plugin>, <plugin stem>_DISTR.ini,
                               meshes/CardboardFaceMask/*.nif, textures/CardboardFaceMask/*.dds
   dist/CardboardFaceMask.zip  the same files, zip root = Data folder contents (MO2 / Vortex / manual)
   work/package_report.json    file list with sizes + SHA-256 and the validation results
 
-The SPID line format and every rule the validator applies to the INI come from SPID's source;
-see docs/SPID_NOTES.md for file:line citations. Packaging fails loudly (exit code 1) on:
+The DISTR ini (SPID) holds an Item line that puts the mask into NPC inventories and, with
+equip_method kef (default), a Keyword line whose KEFEquip_... keyword makes KEF (Keyword Equip
+Framework, an SKSE plugin) equip it; SPID itself never equips items. The line formats and every
+rule the validator applies to the ini come from SPID's source; see docs/SPID_NOTES.md for
+file:line citations (KEF: section 13). Packaging fails loudly (exit code 1) on:
 build products that do not match config.yaml or each other (silhouette mode, photo, fixtures,
 a stage output older than its input), missing inputs, stray or mis-named files, a texture path in
 any of a NIF's nine texture slots or a model path in the ESP that does not resolve (exact case)
-inside the package, unreferenced meshes/textures, a DISTR line that does not point at the shipped
-plugin's ARMO, or a zip whose contents differ from the folder. The package is assembled in a
-staging folder and only replaces dist/ once it is valid.
+inside the package, unreferenced meshes/textures, DISTR lines that do not point at the shipped
+plugin's ARMO (or do not select the same NPCs), or a zip whose contents differ from the folder.
+The package is assembled in a staging folder and only replaces dist/ once it is valid.
 
 Run from the repo root:
   .venv/bin/python src/07_package.py               # assemble + validate + zip
@@ -52,6 +56,18 @@ ITEM_COUNT = 1
 REQUIRED_MASTERS = ["Skyrim.esm"]
 ESL_ID_RANGE = (0x800, 0xFFF)          # object indices an ESL-flagged plugin may define
 SPID_SECTIONS = 7                        # SPID Parser.h: at most 7 '|' sections per entry
+
+# How NPCs come to wear the mask (config.yaml equip_method; docs/SPID_NOTES.md sections 9, 13).
+EQUIP_METHODS = ("kef", "engine")        # kef = Item + KEFEquip Keyword line; engine = Item line only
+KEF_PREFIX = "KEFEquip"                  # KEF keyword: KEFEquip_0x<FORMID>_<MODNAME>_<EXTENSION>
+KEF_URL = "https://www.nexusmods.com/skyrimspecialedition/mods/185273"
+# Plugin names allowed in a KEF keyword: letters/digits, optionally joined by single '_'. KEF's own
+# example KEFEquip_0x803_Kad_AkaviriHats_esp_forceEquip_true (Kad_AkaviriHats.esp) shows inner
+# underscores; spaces, dots and doubled/edge '_' are not shown anywhere, so they are refused on
+# purpose, and so are '_' parts that look like KEF's own tokens (extension, forceEquip suffix).
+KEF_MODNAME_RE = re.compile(r"^[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*$")
+KEF_FORCE_SUFFIX = "_forceEquip_true"    # per KEF's page: equip even if the slot is taken (not used)
+PLUGIN_EXTENSIONS = ("esp", "esm", "esl")
 
 ZIP_PATH = DIST / f"{MOD_NAME}.zip"
 STAGING = DIST / f".{MOD_NAME}.staging"   # assembled + validated here, then moved into place
@@ -107,19 +123,72 @@ def chance_field(value) -> str:
     return text if float(text) >= 100 else text + "!"
 
 
-def distribution_line(cfg: dict) -> str:
-    """Item = FormOrEditorID|StringFilters|FormFilters|LevelFilters|Traits|Count|Chance"""
+def equip_method(cfg: dict) -> str:
+    """config.yaml equip_method: 'kef' (default) or 'engine'."""
+    method = cfg.get("equip_method", "kef")
+    if method not in EQUIP_METHODS:
+        raise PackageError(f"equip_method must be one of {', '.join(EQUIP_METHODS)}, got {method!r}")
+    return method
+
+
+def item_form(plugin_name: str) -> str:
+    """SPID FormID~plugin of the mask ARMO: the local ID, correct for ESL-flagged plugins."""
+    return f"0x{ARMO_LOCAL_ID:X}~{plugin_name}"
+
+
+def kef_keyword(plugin_name: str) -> str:
+    """EditorID of the keyword that tells KEF to equip the mask: KEFEquip_0x<FORMID>_<MODNAME>_<EXT>,
+    the format and the 0x800-in-an-.esp example on KEF's Nexus page (docs/SPID_NOTES.md section 13;
+    its second example, Kad_AkaviriHats.esp, has an '_' in the plugin name). No plugin defines it: SPID creates a keyword with this EditorID (SPID FormData.h:170-197). It
+    contains no '~' and no '.es' and is not pure hex, so SPID reads it as an EditorID rather than a
+    FormID or plugin name (CLibUtil distribution.hpp:86-98)."""
+    stem, dot, ext = plugin_name.rpartition(".")
+    if not dot or ext not in PLUGIN_EXTENSIONS:
+        raise PackageError(f"plugin_name {plugin_name!r} must end in .esp, .esm or .esl")
+    reserved = {*PLUGIN_EXTENSIONS, "forceequip"}
+    if not KEF_MODNAME_RE.match(stem) or reserved & {part.lower() for part in stem.split("_")}:
+        raise PackageError(f"equip_method kef: plugin_name {plugin_name!r} must be letters and digits, "
+                           f"optionally joined by single '_', before the extension, with no '_' part "
+                           f"named {', '.join(sorted(reserved))}: KEF reads the plugin name back out of "
+                           f"the keyword {KEF_PREFIX}_0x{ARMO_LOCAL_ID:X}_<name>_{ext}, and only names "
+                           "of that shape appear in KEF's examples (restricted on purpose)")
+    return f"{KEF_PREFIX}_0x{ARMO_LOCAL_ID:X}_{stem}_{ext}"
+
+
+def spid_entry(key: str, form: str, strings: str, traits: str, count: str, chance: str) -> str:
+    """key = FormOrEditorID|StringFilters|FormFilters|LevelFilters|Traits|Count|Chance"""
+    return f"{key} = " + "|".join([form, strings, "NONE", "NONE", traits, count, chance])
+
+
+def distribution_lines(cfg: dict) -> list[str]:
+    """The active DISTR entries, in file order.
+
+    engine: the Item line only (SPID adds the mask to the inventory and never equips it).
+    kef:    the Item line and a Keyword line with the same filters and chance; the keyword only has
+            an effect when KEF is installed. Below 100 % the two lines would roll independently
+            (the deterministic seed hashes the whole entry text, SPID LookupConfigs.cpp:73-74,
+            LookupFilters.cpp:201-208), so then only the Keyword line carries the chance and the Item
+            line selects the NPCs that got the keyword: SPID distributes keywords before items to
+            the same NPC (Distribute.cpp:15-19 vs 94-105) and string filters see keywords it added
+            (Distribute.h:192, LookupNPC.cpp:86-91, 117-120)."""
     plugin = cfg["plugin_name"]
     traits = "-C" if cfg.get("exclude_children", True) else "NONE"
-    sections = [f"0x{ARMO_LOCAL_ID:X}~{plugin}", STRING_FILTER, "NONE", "NONE", traits,
-                str(ITEM_COUNT), chance_field(cfg.get("chance_percent", 100))]
-    return "Item = " + "|".join(sections)
+    chance = chance_field(cfg.get("chance_percent", 100))
+    method = equip_method(cfg)
+    item = spid_entry("Item", item_form(plugin), STRING_FILTER, traits, str(ITEM_COUNT), chance)
+    if method == "engine":
+        return [item]
+    keyword = kef_keyword(plugin)
+    if chance != "100":
+        item = spid_entry("Item", item_form(plugin), keyword, traits, str(ITEM_COUNT), "100")
+    return [item, spid_entry("Keyword", keyword, STRING_FILTER, traits, "NONE", chance)]
 
 
 def make_distr_ini(cfg: dict) -> str:
     """The complete CardboardFaceMask_DISTR.ini text (ASCII, comments on their own lines)."""
     plugin = cfg["plugin_name"]
-    form = f"0x{ARMO_LOCAL_ID:X}~{plugin}"
+    form = item_form(plugin)
+    keyword = kef_keyword(plugin) if equip_method(cfg) == "kef" else None
     beast = "-0x13740~Skyrim.esm,-0x13745~Skyrim.esm,-0x8883A~Skyrim.esm,-0x88845~Skyrim.esm"
     lines = [
         f"; {distr_ini_name(plugin)} - Spell Perk Item Distributor (SPID) configuration",
@@ -129,6 +198,41 @@ def make_distr_ini(cfg: dict) -> str:
         "; Lines starting with ';' or '#' are comments; keep comments on their own line and do not",
         "; add [section] headers (SPID only reads entries outside sections).",
         ";",
+    ]
+    if keyword:
+        lines += [
+            "; Two active lines (config.yaml equip_method: kef):",
+            ";   Item     puts one mask into the inventory of every matching NPC. SPID never equips",
+            ";            items, so on its own this line only makes NPCs CARRY the mask.",
+            f";   Keyword  gives the same NPCs the keyword {keyword}, which SPID",
+            ";            creates (no plugin defines it). The keyword does nothing by itself: KEF -",
+            ";            Keyword Equip Framework, an SKSE plugin you install separately,",
+            f";            {KEF_URL}",
+            f";            reads it and makes the NPC WEAR item 0x{ARMO_LOCAL_ID:X} of {plugin}.",
+            ";            Without KEF the keyword is harmless and NPCs are expected to only carry",
+            ";            the mask.",
+            ";   KEF's page (not tested here) says that when the NPC already wears another item in",
+            ";   that slot (55) the item is 'NOT added to the NPC's inventory and is not equipped',",
+            ";   which implies that KEF normally adds the item itself. So with KEF an NPC will",
+            ";   probably carry TWO masks, one worn; the Item line stays as the fallback in case KEF",
+            ";   only equips. To force the mask on over another slot-55 item (KEF then unequips",
+            f";   that item), KEF's page says to append {KEF_FORCE_SUFFIX} to the keyword name:",
+            f";   {keyword}{KEF_FORCE_SUFFIX} (below 100 % in both lines).",
+            ";   Both lines select the same NPCs; change both when you edit one. Below 100 % only the",
+            ";   Keyword line has the chance and the Item line uses the keyword as its filter (two",
+            ";   separate chance rolls would mostly pick different NPCs).",
+            ";",
+        ]
+    else:
+        lines += [
+            "; One active line (config.yaml equip_method: engine): it puts one mask into the inventory",
+            "; of every matching NPC. SPID never equips items, so NPCs may just CARRY the mask; whether",
+            "; the game puts it on by itself is not verified. To make NPCs wear it, install KEF -",
+            f"; Keyword Equip Framework ({KEF_URL})",
+            "; and rebuild with equip_method: kef.",
+            ";",
+        ]
+    lines += [
         "; Item = FormOrEditorID|StringFilters|FormFilters|LevelFilters|Traits|Count|Chance",
         f";   FormOrEditorID  {form}  local FormID of the mask (no load-order prefix) ~ plugin.",
         ";                   Correct for ESL-flagged plugins. The EditorID FaceMaskArmor would only",
@@ -145,25 +249,48 @@ def make_distr_ini(cfg: dict) -> str:
         ";   Chance          percent; 100 = every matching NPC. Below 100 a trailing '!' fixes each",
         ";                   NPC's roll for this character's saves (same NPCs every launch);",
         ";                   without '!' SPID re-rolls on every game launch.",
-        ";",
-        "; SPID puts the mask into each matching NPC's base inventory when the NPC loads; the game",
-        "; itself decides to wear it (see README). SPID never gives anything to the player.",
-        "; Log: Documents\\My Games\\Skyrim Special Edition\\SKSE\\po3_SpellPerkItemDistributor.log",
-        "; A line SPID cannot read is skipped and logged there as 'Failed to parse entry', usually",
-        "; without any message in game. 'Registered x/y Items' counts the Item lines of all ini files.",
-        ";",
-        "; Example exclusions: keep ONE active Item line (copy it, edit the copy, comment out the old):",
-        ";   no Argonians/Khajiit (incl. vampires):",
-        f";     Item = {form}|{STRING_FILTER}|{beast}|NONE|-C|1|100",
-        ";   everyone except NPCs named Nazeem:",
-        f";     Item = {form}|{STRING_FILTER},-Nazeem|NONE|NONE|-C|1|100",
-        ";   only one NPC in four, the same ones every launch (remove the '!' to re-roll each launch):",
-        f";     Item = {form}|{STRING_FILTER}|NONE|NONE|-C|1|25!",
-        "",
-        distribution_line(cfg),
-        "",
     ]
-    return "\n".join(lines)
+    if keyword:
+        lines += [
+            "; Keyword = EditorID|StringFilters|FormFilters|LevelFilters|Traits|Count|Chance",
+            f";   EditorID        {KEF_PREFIX}_0x<local FormID>_<plugin name>_<extension> (KEF's format).",
+            ";   Count           NONE  (SPID ignores counts for keywords); the other fields as above.",
+        ]
+    lines += [
+        ";",
+        "; SPID adds these to each matching NPC's base record when the NPC loads. It never gives",
+        "; anything to the player.",
+        "; Log: Documents\\My Games\\Skyrim Special Edition\\SKSE\\po3_SpellPerkItemDistributor.log",
+        "; A line SPID cannot read is skipped and logged there as 'Failed to parse entry', without a",
+        "; message in game. 'Registered x/y Items' (and '... Keywords') counts the lines of all ini files.",
+        ";",
+    ]
+    if keyword:
+        lines += [
+            "; Examples: keep ONE active Item line and ONE active Keyword line (copy both, make the same",
+            "; change in both copies, comment out the old pair):",
+            ";   no Argonians/Khajiit (incl. vampires):",
+            f";     Item = {form}|{STRING_FILTER}|{beast}|NONE|-C|1|100",
+            f";     Keyword = {keyword}|{STRING_FILTER}|{beast}|NONE|-C|NONE|100",
+            ";   everyone except NPCs named Nazeem:",
+            f";     Item = {form}|{STRING_FILTER},-Nazeem|NONE|NONE|-C|1|100",
+            f";     Keyword = {keyword}|{STRING_FILTER},-Nazeem|NONE|NONE|-C|NONE|100",
+            ";   only one NPC in four, the same ones every launch (remove the '!' to re-roll each launch);",
+            ";   the Item line follows the keyword:",
+            f";     Item = {form}|{keyword}|NONE|NONE|-C|1|100",
+            f";     Keyword = {keyword}|{STRING_FILTER}|NONE|NONE|-C|NONE|25!",
+        ]
+    else:
+        lines += [
+            "; Example exclusions: keep ONE active Item line (copy it, edit the copy, comment out the old):",
+            ";   no Argonians/Khajiit (incl. vampires):",
+            f";     Item = {form}|{STRING_FILTER}|{beast}|NONE|-C|1|100",
+            ";   everyone except NPCs named Nazeem:",
+            f";     Item = {form}|{STRING_FILTER},-Nazeem|NONE|NONE|-C|1|100",
+            ";   only one NPC in four, the same ones every launch (remove the '!' to re-roll each launch):",
+            f";     Item = {form}|{STRING_FILTER}|NONE|NONE|-C|1|25!",
+        ]
+    return "\n".join([*lines, "", *distribution_lines(cfg), ""])
 
 
 def parse_distr_ini(text: str) -> list[tuple[str, str]]:
@@ -181,6 +308,30 @@ def parse_distr_ini(text: str) -> list[tuple[str, str]]:
         key, value = (part.strip() for part in line.split("=", 1))
         entries.append((key, value))
     return entries
+
+
+def spid_sanitize(value: str) -> str:
+    """What SPID's detail::sanitize makes of an entry value (LookupConfigs.cpp:13-53, SE/AE build:
+    the VR-only block is skipped). If it changes anything SPID rewrites the ini file on disk
+    (LookupConfigs.cpp:140-158), so shipped lines must come out unchanged."""
+    if "~" not in value:
+        value = value.replace(" - ", "~", 1)
+    value = re.sub(r"\s*\|\s*", "|", value)
+    value = re.sub(r"\s*,\s*", ",", value)
+    value = re.sub(r"\b00+([0-9a-fA-F]{1,6})\b", r"0x\1", value)
+    return re.sub(r"(0x00+)([0-9a-fA-F]+)", r"0x\2", value)
+
+
+def spid_record_kind(text: str) -> str:
+    """How SPID reads a FormOrEditorID section: CLibUtil distribution.hpp:86-98 (get_record_type)
+    with string.hpp:65-77 (is_only_hex, '0x' prefix required)."""
+    if "~" in text:
+        return "formid~plugin"
+    if ".es" in text:
+        return "plugin"
+    if re.fullmatch(r"0[xX][0-9a-fA-F]+", text):
+        return "formid"
+    return "editorid"
 
 
 # --------------------------------------------------------------------------- build inputs
@@ -369,10 +520,12 @@ def dds_problems(path: Path) -> list[str]:
 
 
 def nif_texture_refs(path: Path) -> list[tuple[str, str, str]]:
-    """(shape name, texture slot, raw path) for every non-empty texture slot in the NIF.
+    """(shape name, 'slot N', raw path) for every non-empty texture slot in the NIF; N is the
+    0-based index into BSShaderTextureSet.Textures (0 diffuse ... 8), as nifly and NifSkope count.
 
-    pyn's shape.textures only lists the slots its shader flags enable (pynifly.py:3527-3580), so
-    each of the nine slots is read directly; nifly returns '' for empty or missing slots and also
+    pyn's shape.textures only lists the slots its shader flags enable and never reads index 8
+    (pynifly.py:3527-3580), so every index 0-8 is read directly. pyn's _readtexture(layer) reads
+    nifly index layer-1 (pynifly.py:3520-3524); nifly returns '' for empty or missing slots and also
     maps BSEffectShaderProperty textures onto slot numbers (NifFile.cpp GetTextureSlot)."""
     try:
         from cfm.nifenv import NifFile  # needs the NiflyDLL (tools/setup.sh builds it)
@@ -385,10 +538,10 @@ def nif_texture_refs(path: Path) -> list[tuple[str, str, str]]:
     refs = []
     for shape in shapes:
         shader = shape.shader
-        for slot in range(1, TEXTURE_SLOTS + 1):
-            tex = shader._readtexture(nif._handle, shape._handle, slot)
+        for index in range(TEXTURE_SLOTS):
+            tex = shader._readtexture(nif._handle, shape._handle, index + 1)
             if tex:
-                refs.append((shape.name, f"slot {slot}", tex))
+                refs.append((shape.name, f"slot {index}", tex))
     return refs
 
 
@@ -514,6 +667,37 @@ def check_manifest(report: dict) -> list[str]:
     return problems
 
 
+def chance_percent_of(section: str) -> float:
+    """A chance section as SPID reads it: empty or NONE = 100 (LookupConfigs.h:575-591)."""
+    text = section.rstrip("!")
+    if text.upper() in ("", "NONE"):
+        return 100.0
+    try:
+        return float(text)
+    except ValueError:
+        return math.nan
+
+
+def pairing_problems(item: list[str], keyword: list[str], name: str) -> list[str]:
+    """The Item and the KEFEquip Keyword line must reach the same NPCs (see distribution_lines):
+    same filters and chance, or, below 100 %, the Item line filtered on the keyword at 100 %."""
+    item = (item + [""] * SPID_SECTIONS)[:SPID_SECTIONS]
+    keyword = (keyword + [""] * SPID_SECTIONS)[:SPID_SECTIONS]
+    if item[2:5] != keyword[2:5]:
+        return [f"Item and Keyword lines have different form/level/trait filters {item[2:5]} vs "
+                f"{keyword[2:5]}: NPCs would get a mask KEF does not equip, or a keyword without mask"]
+    if item[1] == name and chance_percent_of(item[6]) >= 100:
+        return []   # the Item line follows the keyword
+    if chance_percent_of(keyword[6]) < 100:
+        return [f"the Keyword line has chance {keyword[6]!r}: the Item line must then use {name} as "
+                "its string filter with chance 100 (two chance rolls are independent, SPID "
+                "LookupConfigs.cpp:73-74, LookupFilters.cpp:201-208)"]
+    if item[1] != keyword[1] or chance_percent_of(item[6]) < 100:
+        return [f"Item and Keyword lines select different NPCs (string filters {item[1]!r} vs "
+                f"{keyword[1]!r}, chance {item[6]!r} vs {keyword[6]!r})"]
+    return []
+
+
 def check_ini(pkg_dir: Path, cfg: dict, plugin_name: str, ini_name: str, report: dict) -> list[str]:
     path = pkg_dir / ini_name
     if not path.is_file():
@@ -530,18 +714,27 @@ def check_ini(pkg_dir: Path, cfg: dict, plugin_name: str, ini_name: str, report:
         entries = parse_distr_ini(text)
     except PackageError as e:
         return [f"{ini_name}: {e}"]
-    items = [(k, v) for k, v in entries if k == "Item"]
-    others = [(k, v) for k, v in entries if k != "Item"]
+    method = equip_method(cfg)
+    allowed = ("Item", "Keyword") if method == "kef" else ("Item",)
+    items = [v.split("|") for k, v in entries if k == "Item"]
+    keywords = [v.split("|") for k, v in entries if k == "Keyword"]
+    others = [(k, v) for k, v in entries if k not in allowed]
     if others:
-        problems.append(f"{ini_name}: unexpected entries {others}")
+        problems.append(f"{ini_name}: unexpected entries {others} (equip_method {method})")
     if not items:
         problems.append(f"{ini_name}: no active 'Item = ...' line")
-    for _, value in items:
+    elif len(items) > 1:
+        problems.append(f"{ini_name}: {len(items)} active Item lines; matching Item lines add up "
+                        "to several masks per NPC")
+    for key, value in entries:
         sections = value.split("|")
         if len(sections) > SPID_SECTIONS:
-            problems.append(f"{ini_name}: {len(sections)} sections, SPID accepts at most {SPID_SECTIONS}")
-        if value != re.sub(r"\s*([|,])\s*", r"\1", value):
-            problems.append(f"{ini_name}: spaces around '|' or ',' (SPID would rewrite the file)")
+            problems.append(f"{ini_name}: {key} line has {len(sections)} sections, SPID accepts at "
+                            f"most {SPID_SECTIONS}")
+        if spid_sanitize(value) != value:
+            problems.append(f"{ini_name}: SPID would rewrite {key} = {value!r} as "
+                            f"{spid_sanitize(value)!r} (and save the file)")
+    for sections in items:
         match = re.fullmatch(r"0x([0-9A-Fa-f]+)~(.+)", sections[0])
         if not match:
             problems.append(f"{ini_name}: {sections[0]!r} is not '0xID~Plugin.esp'")
@@ -550,10 +743,30 @@ def check_ini(pkg_dir: Path, cfg: dict, plugin_name: str, ini_name: str, report:
             problems.append(f"{ini_name}: entry targets {match.group(2)!r}, shipped plugin is {plugin_name!r}")
         if int(match.group(1), 16) != ARMO_LOCAL_ID:
             problems.append(f"{ini_name}: FormID 0x{match.group(1)} is not the mask ARMO 0x{ARMO_LOCAL_ID:X}")
+    name = None
+    if method == "kef":
+        name = kef_keyword(plugin_name)
+        if len(keywords) != 1:
+            problems.append(f"{ini_name}: {len(keywords)} active 'Keyword = {name}|...' lines, "
+                            "expected exactly one (equip_method kef)")
+        for sections in keywords:
+            if sections[0] != name:
+                problems.append(f"{ini_name}: keyword {sections[0]!r} is not {name!r} (KEF would equip "
+                                "another item, or nothing)")
+            elif spid_record_kind(sections[0]) != "editorid":
+                problems.append(f"{ini_name}: SPID would read {sections[0]!r} as a "
+                                f"{spid_record_kind(sections[0])}, not as a keyword EditorID")
+            if len(sections) > 5 and sections[5].upper() not in ("", "NONE"):
+                problems.append(f"{ini_name}: Keyword count {sections[5]!r} must be NONE (SPID ignores "
+                                "counts for keywords)")
+        if len(items) == 1 and len(keywords) == 1:
+            problems += [f"{ini_name}: {p}" for p in pairing_problems(items[0], keywords[0], name)]
     expected = make_distr_ini(cfg)
     if text != expected:
         problems.append(f"{ini_name}: differs from what config.yaml generates (rebuild the package)")
-    report["distr_lines"] = [f"{k} = {v}" for k, v in items]
+    report["equip_method"] = method
+    report["kef_keyword"] = name
+    report["distr_lines"] = [f"{k} = {v}" for k, v in entries]
     return problems
 
 
@@ -663,7 +876,8 @@ def build_package(cfg: dict, with_zip: bool = True) -> dict:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--check-only", action="store_true",
-                    help="validate the existing dist/ package and zip only (no rebuild, work/ not read)")
+                    help="validate the existing dist/ package and zip only (no rebuild, no build-input "
+                         "gate, no report written)")
     ap.add_argument("--print-ini", action="store_true", help="print the DISTR ini and exit")
     ap.add_argument("--no-zip", action="store_true", help="do not write the zip (an old zip is removed)")
     args = ap.parse_args(argv)
@@ -671,10 +885,13 @@ def main(argv: list[str] | None = None) -> int:
     if cfg.get("distribute_to_player"):
         print("note: distribute_to_player is ignored - SPID never distributes to the player "
               "(see docs/SPID_NOTES.md); use the console to try the mask on yourself.")
-    if args.print_ini:
-        print(make_distr_ini(cfg), end="")
-        return 0
     try:
+        if args.print_ini:
+            print(make_distr_ini(cfg), end="")
+            return 0
+        if equip_method(cfg) == "kef":
+            print(f"note: equip_method kef - NPCs only wear the mask in game when KEF (Keyword Equip "
+                  f"Framework, {KEF_URL}) is installed; without it they are expected to just carry it.")
         if args.check_only:
             report = validate_package(MOD_DIST, cfg)
             if not args.no_zip:

@@ -22,6 +22,8 @@ When the segment stage does not run (--skip-ml, --from textures, ...) but textur
 existing work/outline.json must match config.yaml (silhouette_mode, source_image, photo size) and
 work/matte.png must exist; otherwise the build stops before any stage runs. work/ is not in git,
 so the first build of a fresh clone needs the segment stage (or both files copied over).
+When the package stage is selected, the SPID ini settings in config.yaml (plugin_name,
+chance_percent, equip_method, ...) are checked before any stage runs, too.
 """
 from __future__ import annotations
 
@@ -126,6 +128,18 @@ def check_outline(stages: list[Stage]) -> None:
                          + "\nRun the segment stage first: build without --skip-ml, or `--only segment`.")
 
 
+def check_package_config(stages: list[Stage]) -> None:
+    """A config.yaml value the package stage rejects (e.g. equip_method: KEF) should stop the build
+    before the long stages run, not after them."""
+    if "package" not in {s.name for s in stages}:
+        return
+    package = package_module()
+    try:
+        package.make_distr_ini(package.load_config())
+    except package.PackageError as e:
+        raise BuildError(f"config.yaml: {e}") from e
+
+
 def check_scripts(stages: list[Stage]) -> None:
     missing = [s.script for s in stages if s.script and not (ROOT / s.script).is_file()]
     if missing:
@@ -183,6 +197,7 @@ def main(argv: list[str] | None = None) -> int:
         stages = select(args)
         check_scripts(stages)
         check_outline(stages)
+        check_package_config(stages)
         for i, stage in enumerate(stages, 1):
             try:
                 results.append((stage.name, run_stage(i, len(stages), stage, shlex.split(args.pytest_args)), "ok"))

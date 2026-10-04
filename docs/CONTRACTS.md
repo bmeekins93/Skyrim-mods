@@ -146,7 +146,7 @@ Local FormIDs (ESL range): ARMO `FaceMaskArmor` = 0x800, ARMA `FaceMaskAA` = 0x8
 ARMA `FaceMaskAA_Beast` = 0x802. Model paths come from `work/nif_manifest.json`
 (relative to `meshes\`, backslashes).
 
-## Stage 6 — package: `src/07_package.py` → `dist/CardboardFaceMask/`, `dist/CardboardFaceMask.zip`
+## Stage 6 — package: `src/07_package.py` → `dist/CardboardFaceMask/`, `dist/CardboardFaceMask.zip`, `work/package_report.json`
 
 ```
 dist/CardboardFaceMask/
@@ -154,4 +154,64 @@ dist/CardboardFaceMask/
   CardboardFaceMask_DISTR.ini
   meshes/CardboardFaceMask/*.nif
   textures/CardboardFaceMask/*.dds
+dist/CardboardFaceMask.zip            same files, zip root = Data folder, fixed timestamps (reproducible)
+```
+
+Inputs: `work/plugin/<plugin_name>`, `work/nif/*.nif`, `work/dds/*.dds`, the four build records
+below and `config.yaml` (`plugin_name`, `exclude_children`, `chance_percent`, `equip_method`,
+`silhouette_mode`, `source_image`).
+
+**DISTR ini** (`<plugin stem>_DISTR.ini`, ASCII, generated from config, rules and citations in
+docs/SPID_NOTES.md):
+- `equip_method: kef` (default): two active lines, `Item = 0x800~<plugin>|ActorTypeNPC|NONE|NONE|<traits>|1|<chance>`
+  and `Keyword = KEFEquip_0x800_<plugin stem>_<ext>|ActorTypeNPC|NONE|NONE|<traits>|NONE|<chance>`
+  (traits `-C` or `NONE`; chance `100`, or e.g. `25!` below 100). Below 100 % the chance stays on the
+  `Keyword` line and the `Item` line uses the keyword as its string filter with chance `100`.
+  The plugin stem must be `[A-Za-z0-9]+(_[A-Za-z0-9]+)*` with no `_` part named esp/esm/esl/forceEquip
+  (KEF keyword format; KEF's own example plugin `Kad_AkaviriHats.esp` has an `_`; SPID_NOTES section 13).
+  The KEF suffix `_forceEquip_true` is not written (documented as a manual ini edit).
+- `equip_method: engine`: the `Item` line only. Any other value is an error.
+
+**Build-input gate** (before anything is assembled; also `outline_problems` is used by
+`src/build_all.py` when the segment stage is skipped):
+- mode/photo consistency: `work/outline.json` `selected_mode` == config `silhouette_mode`, `source`
+  == `source_image`, `image_size` == the photo's size (EXIF rotation applied), `work/matte.png`
+  exists; `work/atlas_layout.json` `silhouette_mode` and every `work/mesh/mesh_report.json`
+  variant's `silhouette_mode` == config; no `*_is_fixture` / `inputs_are_fixtures` flag set.
+- mtime order (all in `work/`): `outline.json` <= `atlas_layout.json` <= `mesh/mesh_report.json` <=
+  `nif_manifest.json` (`BUILT_FROM`: each pair is compared when both files exist); an output older
+  than its input means a stage was skipped, and the error names the `--from` stage to re-run.
+
+**Assembly**: everything is built in `dist/.CardboardFaceMask.staging/` (`CardboardFaceMask/` and the
+zip), validated there, and only then moved over the old `dist/CardboardFaceMask/` and zip; on any
+problem the old package stays untouched and the staging folder is deleted. `dist/` is the only
+folder the stage deletes in (`remove_in_dist`).
+
+**Validation** (also `07_package.py --check-only`, which re-validates the existing `dist/` folder and
+zip without rebuilding, without the build-input gate and without writing the report; it still
+cross-checks `work/nif_manifest.json` when that exists): only the allowed files (plugin, ini,
+`meshes/CardboardFaceMask/*.nif`, `textures/CardboardFaceMask/*.dds`, lower-case `[a-z0-9_]` asset
+names, no symlinks); plugin ESL-flagged, not localized, masters `[Skyrim.esm]`, own records in
+0x800-0xFFF, ARMO `FaceMaskArmor` at 0x800; every ESP model path and every NIF texture path (all
+nine BSShaderTextureSet slots, index 0-8) exists in the package with exact case; no unreferenced
+mesh/texture; DDS headers sane; ESP model paths == `work/nif_manifest.json`; ini entries as above
+(exact text == generator output, `Item` targets 0x800 of the shipped plugin, the keyword is the KEF
+name for it and reads as an EditorID in SPID, both lines select the same NPCs, nothing SPID's
+sanitizer would rewrite); zip entries == folder files byte for byte.
+
+**`work/package_report.json`** (written by a full run only):
+```json
+{
+  "package_dir": "dist/CardboardFaceMask",
+  "plugin": {"esl": true, "masters": ["Skyrim.esm"],
+             "records": [{"type": "ARMO", "editor_id": "FaceMaskArmor", "local_id": "0x800"}, ...],
+             "model_paths": ["CardboardFaceMask\\mask_beast_f.nif", ...]},
+  "nif_textures": {"meshes/CardboardFaceMask/mask_human_m.nif": ["textures\\CardboardFaceMask\\mask_d.dds", ...], ...},
+  "equip_method": "kef",
+  "kef_keyword": "KEFEquip_0x800_CardboardFaceMask_esp",      // null with equip_method engine
+  "distr_lines": ["Item = 0x800~CardboardFaceMask.esp|...", "Keyword = KEFEquip_0x800_...|..."],
+  "files": [{"path": "CardboardFaceMask.esp", "bytes": 900, "sha256": "..."}, ...],
+  "build_inputs": {"silhouette_mode": "face_hair_glasses", "source_image": "input/IMG_2117.PNG", "consistent": true},
+  "zip": {"path": "dist/CardboardFaceMask.zip", "bytes": n, "sha256": "...", "entries": 10}
+}
 ```

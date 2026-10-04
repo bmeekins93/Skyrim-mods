@@ -38,6 +38,9 @@ PYNIFLY_SPARSE = [
     "tests/tests/SkyrimSE/skeleton_vanilla.nif",
     "tests/tests/SkyrimSE/skeletonbeast_female.nif",
     "tests/tests/SkyrimSE/CitrusFemHead.nif",
+    "tests/tests/SkyrimSE/maleorchair27.nif",
+    "tests/tests/SkyrimSE/meshes/actors/character/character assets/maleheadkhajiit.nif",
+    "tests/tests/SkyrimSE/meshes/draugr lich01 hood.nif",
     "tests/tests/Skyrim/skeletonbeast_vanilla.nif",
 ]
 

@@ -6,8 +6,15 @@ Heads (vanilla SSE data from PyNifly's test assets at the commit pinned in tools
   human    = malehead.nif           skinned to skeleton.nif
   argonian = maleheadargonian.nif   skinned to skeletonbeast.nif
   khajiit  = maleheadkhajiit.nif    skinned to skeletonbeast.nif  (meshes/actors/character/character
-             assets/ in PyNifly; until tools/setup.sh fetches it, a byte-identical copy in
-             tests/fixtures/vanilla/ is used - every reference file is checked against its sha256)
+             assets/ in PyNifly)
+Every reference file is checked against its pinned sha256 (byte-identical fallback copies of the files
+that joined the sparse checkout later live in tests/fixtures/vanilla/, see reference_path).
+Headgear references for the twine (src/03_mesh.py; human skeleton, informational except the hair gate):
+  helmet-SMP.nif               vanilla-style skinned helmet (also the transform proof below)
+  maleorchair27.nif            hair MaleOrcHair27 (BSDynamicTriShape, NPC Head [Head]), a dreadlock
+                               mohawk; made for the orc head, so ~17 % of it lies inside the human head
+  meshes/draugr lich01 hood.nif  skinned cloth hood (PyNifly test asset, textures\_00\actors\lich\;
+                               made for the human skeleton, vertices stored in model space)
 One beast mesh serves both Khajiit and Argonians (ARMA FaceMaskAA_Beast), so the beast variants are
 fitted to an anchor that combines both heads (see kind_anchor) and are clearance-checked against both.
 Vertices are stored in skin space; model space is  sum_i w_i * bind_i @ skin_to_bone_i @ v  with
@@ -60,6 +67,12 @@ HEAD_SOURCES = {
     "khajiit": ("SkyrimSE/meshes/actors/character/character assets/maleheadkhajiit.nif", "skeletonbeast.nif"),
 }
 HELMET_SOURCE = ("SkyrimSE/helmet-SMP.nif", "Helmet", "skeleton.nif")
+# Headgear the twine is measured against (03_mesh.py): (file, shape name or None = first, skeleton)
+HEADGEAR_SOURCES = {
+    "helmet": HELMET_SOURCE,
+    "hair": ("SkyrimSE/maleorchair27.nif", "MaleOrcHair27", "skeleton.nif"),
+    "hood": ("SkyrimSE/meshes/draugr lich01 hood.nif", "Hood", "skeleton.nif"),
+}
 # Not vanilla: PyNifly's custom "cheetah" female head (Khajiit-derived topology, textures
 # actors\character\cheetahfemale). Used only as an informational clearance reference for beast_f.
 EXTRA_REFERENCES = {"beast_f": [("SkyrimSE/CitrusFemHead.nif", "skeletonbeast_female.nif")]}
@@ -71,8 +84,10 @@ REFERENCE_SHA256 = {
         "de5602f85a1c5be4b312120a5b0ab0fc9add371b47c04e1db35b8f93e62bab6b",
     "SkyrimSE/helmet-SMP.nif": "fb02d4aed6745d60d912c1d7c8c6ee616053e9328b9c6723431c101684adfaa1",
     "SkyrimSE/CitrusFemHead.nif": "a02db3d747653e1459c8418eeccb394a9e23dbad0e259eb511f20d2177447d35",
+    "SkyrimSE/maleorchair27.nif": "ef6f02e5bed6aee68c4f73b8667af2f6118158c23bf20212cf83b7dd37e01e60",
+    "SkyrimSE/meshes/draugr lich01 hood.nif": "b95d4a3454676a1702c25a2fdc44c2fc998fcef6cfba722362184403047a11e6",
 }
-VANILLA_FIXTURES = ROOT / "tests" / "fixtures" / "vanilla"
+VANILLA_FIXTURES = ROOT / "tests" / "fixtures" / "vanilla"   # fallback copies, see reference_path
 KIND_HEADS = {"human": ("human",), "beast": ("argonian", "khajiit")}
 VARIANT_KIND = {"human_m": "human", "human_f": "human", "beast_m": "beast", "beast_f": "beast"}
 VARIANT_SKELETON = {"human_m": "skeleton.nif", "human_f": "skeleton_female.nif",
@@ -80,6 +95,8 @@ VARIANT_SKELETON = {"human_m": "skeleton.nif", "human_f": "skeleton_female.nif",
 HAIR_ALLOWANCE_UNITS = 1.5   # crown hair allowance used to size the mask (not the twine clearance)
 CROWN_STRIP = 2.0            # scalp crown = highest vertex with |x| <= this (excludes Khajiit ears)
 EAR_PARTITION = 143          # SBP_143_EARS
+SIDE_EAR_BAND = 2.0          # ears whose centroid is within this of the eye line sit beside the head
+                             # (human); Khajiit ears (centroid 6.3 above) sit on top of it
 GRID = 0.05                  # height-field resolution (units)
 FIT_JSON = WORK / "fit.json"
 RENDERS = ROOT / "docs" / "renders"
@@ -111,8 +128,10 @@ def _sha256(path: Path) -> str:
 def reference_path(rel: str) -> Path:
     """Path of a PyNifly reference NIF, checked against its pinned sha256.
 
-    Looks in third_party/PyNifly/tests/tests/<rel> first, then for a byte-identical copy in
-    tests/fixtures/vanilla/ (used for files tools/setup.sh does not fetch yet)."""
+    Looks in third_party/PyNifly/tests/tests/<rel> (the sparse checkout listed in
+    tools/nifly/build_niflydll.py) first, then for the byte-identical copy in tests/fixtures/vanilla/:
+    a checkout made before a file joined PYNIFLY_SPARSE does not get it from build_niflydll.py, which
+    leaves checkouts already at the pinned commit alone (tests/fixtures/vanilla/provenance.json)."""
     for cand in (PYNIFLY_TESTS / rel, VANILLA_FIXTURES / Path(rel).name):
         if cand.exists():
             want = REFERENCE_SHA256.get(rel)
@@ -185,6 +204,15 @@ def load_helmet():
     return v, t, report
 
 
+def load_headgear() -> dict:
+    """{name: (model-space verts, tris, skin report)} for the helmet, hair and hood references."""
+    out = {}
+    for name, (rel, shape, skel) in HEADGEAR_SOURCES.items():
+        v, t, _, report = load_skinned_shape(reference_path(rel), SKELETONS / skel, shape)
+        out[name] = (v, t, {"source": rel, **report})
+    return out
+
+
 # --- measurements ---------------------------------------------------------------------------
 
 
@@ -232,6 +260,8 @@ def measure_eyes(xs, zs, hf, nose_z, half_width):
 
 
 def measure_ears(head: Head, chin_z: float):
+    """Outermost point per side; where the head has an SBP_143_EARS partition also its centroid, top
+    (highest vertex) and front-to-back (y) extent."""
     v = head.verts
     above = v[:, 2] >= chin_z
     out = {}
@@ -244,6 +274,8 @@ def measure_ears(head: Head, chin_z: float):
             idx = np.unique(ear_tris)
             idx = idx[sign * v[idx, 0] > 0]
             ear["partition_centroid"] = v[idx].mean(0).round(4).tolist()
+            ear["partition_top"] = v[idx[np.argmax(v[idx, 2])]].round(4).tolist()
+            ear["partition_y_range"] = [round(float(v[idx, 1].min()), 4), round(float(v[idx, 1].max()), 4)]
         out[side] = ear
     return out
 
@@ -412,8 +444,28 @@ def kind_anchor(heads: dict, kind: str) -> dict:
                                           for h in hs.values()])), 4),
         "head_half_width": max(h["head_half_width"] for h in hs.values()),
         "back_of_head_y": min(h["back_of_head_y"] for h in hs.values()),
+        "side_ears": side_ears(hs),
         "rule": "nose = most forward head; eye line / chin / crown = mean over the heads",
     }
+
+
+def side_ears(heads: dict) -> dict | None:
+    """Ears beside the head (partition centroid within SIDE_EAR_BAND of the eye line) that the twine
+    must pass over: highest top over the heads and both sides, their front-to-back (y) extent and the
+    mean centroid of the +X (right) ear, or None
+    (Argonian: no ear partition; Khajiit: ears on top of the head, which the hull clears instead)."""
+    tops, cents, ys = [], [], []
+    for h in heads.values():
+        for ear in h["ears"].values():
+            if "partition_centroid" in ear and abs(ear["partition_centroid"][2] - h["eye_line_z"]) <= SIDE_EAR_BAND:
+                tops.append(ear["partition_top"][2])
+                ys += ear["partition_y_range"]
+                if ear["partition_centroid"][0] > 0:
+                    cents.append(ear["partition_centroid"])
+    if not tops:
+        return None
+    return {"top_z": round(float(max(tops)), 4), "centroid_right": np.mean(cents, axis=0).round(4).tolist(),
+            "y_range": [round(float(min(ys)), 4), round(float(max(ys)), 4)]}
 
 
 def compute_fit(render_images: bool = True) -> dict:
